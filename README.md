@@ -18,9 +18,8 @@ Application web Next.js pour gerer le planning mensuel d'un service d'ambulance 
 - publication d'un horaire en lecture seule
 - export PDF
 - authentification manager via Google OAuth
-- Microsoft OAuth possible si configure, mais optionnel
 
-Le serveur MCP reste hors scope pour le deploiement web courant.
+Le serveur MCP reste hors scope pour le deploiement web actuel.
 
 ## Demarrage local
 1. Installer les dependances:
@@ -80,11 +79,12 @@ npm run test:e2e
 npx prisma migrate deploy
 ```
 
-## CI/CD et deploiement
-La cible de deploiement retenue est:
-- Vercel pour l'application web
-- Neon pour PostgreSQL
-- GitHub Actions pour CI et deploiement pilote
+## CI et deploiement
+Strategie retenue:
+- **GitHub Actions pour la CI uniquement**
+- **Vercel pour le deploiement**
+- **Neon pour PostgreSQL**
+- **migrations Prisma manuelles quand le schema change**
 
 Documentation detaillee:
 - [Deployment guide](docs/deployment.md)
@@ -95,9 +95,3 @@ npm run lint
 npm run build
 npm run test:auth
 ```
-
-## Etat actuel du deploiement
-- application validee localement sur PostgreSQL
-- auth manager Google fonctionnelle
-- workflows GitHub Actions ajoutes pour CI, staging et production
-- deploiement Vercel pilote par GitHub Actions
