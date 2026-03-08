@@ -1,0 +1,316 @@
+generator client {
+  provider = "prisma-client-js"
+  engineType = "client"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PlanningMonthStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum AssignmentStatus {
+  CONFIRMED
+  PROVISIONAL
+}
+
+enum AssignmentSource {
+  MANUAL
+  DRAFT
+}
+
+enum AvailabilityStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum AppUserRole {
+  PLANNER
+  READ_ONLY
+}
+
+enum AvailabilityDraftStatus {
+  DRAFT
+  VALIDATED
+  COMMITTED
+  CANCELLED
+}
+
+enum ScheduleAdjustmentDraftStatus {
+  DRAFT
+  PREVIEWED
+  COMMITTED
+  CANCELLED
+}
+
+enum AuditLogOutcome {
+  SUCCESS
+  FAILURE
+  DENIED
+}
+
+enum AuthIdentityType {
+  WEB_OAUTH
+  MCP_OIDC
+}
+
+enum AssignmentEventType {
+  CREATED
+  UPDATED
+  DELETED
+  PUBLISHED
+  UNPUBLISHED
+}
+
+model AppUser {
+  id                        String                    @id @default(cuid())
+  email                     String                    @unique
+  displayName               String                    @map("display_name")
+  oidcIssuer                String?                   @map("oidc_issuer")
+  oidcSubject               String?                   @map("oidc_subject")
+  role                      AppUserRole               @default(READ_ONLY)
+  active                    Boolean                   @default(true)
+  createdAt                 DateTime                  @default(now()) @map("created_at")
+  updatedAt                 DateTime                  @updatedAt @map("updated_at")
+  identities                AppUserIdentity[]
+  availabilityDrafts        AvailabilityDraft[]
+  scheduleAdjustmentDrafts  ScheduleAdjustmentDraft[]
+  auditLogs                 AuditLog[]
+
+  @@index([oidcIssuer, oidcSubject])
+  @@map("app_users")
+}
+
+model AppUserIdentity {
+  id           String           @id @default(cuid())
+  appUserId    String           @map("app_user_id")
+  type         AuthIdentityType @default(WEB_OAUTH)
+  providerKey  String           @map("provider_key")
+  providerName String           @map("provider_name")
+  subject      String           @map("subject")
+  email        String?
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  lastSeenAt   DateTime?        @map("last_seen_at")
+  appUser      AppUser          @relation(fields: [appUserId], references: [id], onDelete: Cascade)
+
+  @@unique([providerKey, subject])
+  @@index([appUserId])
+  @@map("app_user_identities")
+}
+
+model ManagerAccess {
+  id          String      @id @default(cuid())
+  email       String      @unique
+  displayName String?     @map("display_name")
+  role        AppUserRole @default(PLANNER)
+  active      Boolean     @default(true)
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  @@map("manager_access")
+}
+
+model Volunteer {
+  id                String         @id @default(cuid())
+  name              String
+  color             String
+  maxGuardsPerMonth Int?           @map("max_guards_per_month")
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  availabilities    Availability[]
+  availabilityDrafts AvailabilityDraft[]
+  assignments       Assignment[]
+  monthSettings     VolunteerMonthSetting[]
+  notes             Note[]
+
+  @@map("volunteers")
+}
+
+model PlanningMonth {
+  id                 String               @id @default(cuid())
+  year               Int
+  month              Int
+  startsAt           DateTime             @map("starts_at")
+  endsAt             DateTime             @map("ends_at")
+  status             PlanningMonthStatus  @default(DRAFT)
+  publicToken        String               @unique @default(cuid()) @map("public_token")
+  publicPasswordHash String?              @map("public_password_hash")
+  publishedAt        DateTime?            @map("published_at")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+  availabilities     Availability[]
+  assignments        Assignment[]
+  employeeBlocks     EmployeeBlock[]
+  volunteerSettings  VolunteerMonthSetting[]
+  assignmentEvents   AssignmentEvent[]
+  availabilityDrafts AvailabilityDraft[]
+  scheduleAdjustmentDrafts ScheduleAdjustmentDraft[]
+  notes              Note[]
+
+  @@unique([year, month])
+  @@map("planning_months")
+}
+
+model VolunteerMonthSetting {
+  id                String        @id @default(cuid())
+  volunteerId       String        @map("volunteer_id")
+  planningMonthId   String        @map("planning_month_id")
+  maxGuardsPerMonth Int?          @map("max_guards_per_month")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  volunteer         Volunteer     @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  planningMonth     PlanningMonth @relation(fields: [planningMonthId], references: [id], onDelete: Cascade)
+
+  @@unique([planningMonthId, volunteerId])
+  @@index([volunteerId, planningMonthId])
+  @@map("volunteer_month_settings")
+}
+
+model Availability {
+  id              String             @id @default(cuid())
+  volunteerId     String             @map("volunteer_id")
+  planningMonthId String             @map("planning_month_id")
+  startTime       DateTime           @map("start_time")
+  endTime         DateTime           @map("end_time")
+  status          AvailabilityStatus @default(APPROVED)
+  reviewComment   String?            @map("review_comment")
+  createdAt       DateTime           @default(now()) @map("created_at")
+  updatedAt       DateTime           @updatedAt @map("updated_at")
+  volunteer       Volunteer          @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  planningMonth   PlanningMonth      @relation(fields: [planningMonthId], references: [id], onDelete: Cascade)
+  committedDraft  AvailabilityDraft?
+
+  @@index([planningMonthId, volunteerId])
+  @@index([planningMonthId, status])
+  @@index([planningMonthId, startTime, endTime])
+  @@map("availabilities")
+}
+
+model AvailabilityDraft {
+  id                    String                 @id @default(cuid())
+  volunteerId           String                 @map("volunteer_id")
+  planningMonthId       String                 @map("planning_month_id")
+  createdByUserId       String                 @map("created_by_user_id")
+  committedAvailabilityId String?              @unique @map("committed_availability_id")
+  startTime             DateTime               @map("start_time")
+  endTime               DateTime               @map("end_time")
+  status                AvailabilityDraftStatus @default(DRAFT)
+  validationSummary     Json?                  @map("validation_summary")
+  sourceNote            String?                @map("source_note")
+  validatedAt           DateTime?              @map("validated_at")
+  committedAt           DateTime?              @map("committed_at")
+  cancelledAt           DateTime?              @map("cancelled_at")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+  volunteer             Volunteer              @relation(fields: [volunteerId], references: [id], onDelete: Cascade)
+  planningMonth         PlanningMonth          @relation(fields: [planningMonthId], references: [id], onDelete: Cascade)
+  createdByUser         AppUser                @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+  committedAvailability Availability?          @relation(fields: [committedAvailabilityId], references: [id], onDelete: SetNull)
+
+  @@index([planningMonthId, status])
+  @@index([volunteerId, planningMonthId])
+  @@map("availability_drafts")
+}
+
+model Assignment {
+  id              String           @id @default(cuid())
+  volunteerId     String           @map("volunteer_id")
+  planningMonthId String           @map("planning_month_id")
+  startTime       DateTime         @map("start_time")
+  endTime         DateTime         @map("end_time")
+  status          AssignmentStatus @default(CONFIRMED)
+  source          AssignmentSource @default(MANUAL)
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  volunteer       Volunteer        @relation(fields: [volunteerId], references: [id], onDelete: Restrict)
+  planningMonth   PlanningMonth    @relation(fields: [planningMonthId], references: [id], onDelete: Cascade)
+  events          AssignmentEvent[]
+
+  @@index([planningMonthId, startTime, endTime])
+  @@index([volunteerId, startTime, endTime])
+  @@map("assignments")
+}
+
+model EmployeeBlock {
+  id              String        @id @default(cuid())
+  planningMonthId String        @map("planning_month_id")
+  startTime       DateTime      @map("start_time")
+  endTime         DateTime      @map("end_time")
+  label           String        @default("Salarié")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  planningMonth   PlanningMonth @relation(fields: [planningMonthId], references: [id], onDelete: Cascade)
+
+  @@index([planningMonthId, startTime, endTime])
+  @@map("employee_blocks")
+}
+
+model AssignmentEvent {
+  id              String              @id @default(cuid())
+  planningMonthId String              @map("planning_month_id")
+  assignmentId    String?             @map("assignment_id")
+  eventType       AssignmentEventType @map("event_type")
+  payload         Json?
+  createdAt       DateTime            @default(now()) @map("created_at")
+  planningMonth   PlanningMonth       @relation(fields: [planningMonthId], references: [id], onDelete: Cascade)
+  assignment      Assignment?         @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+
+  @@index([planningMonthId, createdAt])
+  @@index([assignmentId])
+  @@map("assignment_events")
+}
+
+model Note {
+  id              String        @id @default(cuid())
+  planningMonthId String        @map("planning_month_id")
+  volunteerId     String?       @map("volunteer_id")
+  body            String
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+  planningMonth   PlanningMonth @relation(fields: [planningMonthId], references: [id], onDelete: Cascade)
+  volunteer       Volunteer?    @relation(fields: [volunteerId], references: [id], onDelete: SetNull)
+
+  @@index([planningMonthId, createdAt])
+  @@map("notes")
+}
+
+model ScheduleAdjustmentDraft {
+  id             String                        @id @default(cuid())
+  planningMonthId String                       @map("planning_month_id")
+  createdByUserId String                       @map("created_by_user_id")
+  title          String?
+  changeSet      Json                          @map("change_set")
+  preview        Json?
+  status         ScheduleAdjustmentDraftStatus @default(DRAFT)
+  previewedAt    DateTime?                     @map("previewed_at")
+  committedAt    DateTime?                     @map("committed_at")
+  cancelledAt    DateTime?                     @map("cancelled_at")
+  createdAt      DateTime                      @default(now()) @map("created_at")
+  updatedAt      DateTime                      @updatedAt @map("updated_at")
+  planningMonth  PlanningMonth                 @relation(fields: [planningMonthId], references: [id], onDelete: Cascade)
+  createdByUser  AppUser                       @relation(fields: [createdByUserId], references: [id], onDelete: Restrict)
+
+  @@index([planningMonthId, status])
+  @@map("schedule_adjustment_drafts")
+}
+
+model AuditLog {
+  id           String          @id @default(cuid())
+  actorUserId  String          @map("actor_user_id")
+  action       String
+  resourceType String          @map("resource_type")
+  resourceId   String?         @map("resource_id")
+  outcome      AuditLogOutcome
+  details      Json?
+  createdAt    DateTime        @default(now()) @map("created_at")
+  actorUser    AppUser         @relation(fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([actorUserId, createdAt])
+  @@index([resourceType, createdAt])
+  @@map("audit_logs")
+}

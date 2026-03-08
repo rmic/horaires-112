@@ -1,0 +1,437 @@
+"use client";
+
+import { differenceInMinutes, format } from "date-fns";
+import { formatHour, formatShortDate } from "@/lib/time";
+import { cn } from "@/lib/utils";
+
+type Segment = {
+  startTime: string;
+  endTime: string;
+  missingCount: number;
+  volunteerAssignments: Array<{
+    volunteerId: string;
+    volunteerName: string;
+    volunteerColor: string;
+    status: "CONFIRMED" | "PROVISIONAL";
+  }>;
+  employeeBlocks: Array<{
+    id: string;
+    label: string;
+  }>;
+};
+
+type DayTimeline = {
+  dayStart: string;
+  dayEnd: string;
+  segments: Segment[];
+};
+
+type GapCoverageSuggestion = {
+  id: string;
+  name: string;
+  color: string;
+  currentGuards: number;
+  limit: number | null;
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
+};
+
+type GapSuggestion = {
+  startTime: string;
+  endTime: string;
+  missingCount: number;
+  fullCoverageSuggestions: GapCoverageSuggestion[];
+  partialCoverageSuggestions: GapCoverageSuggestion[];
+};
+
+type MonthTimelineProps = {
+  dayTimelines: DayTimeline[];
+  volunteerFilterId?: string;
+  gapSuggestions?: GapSuggestion[];
+  filterMode?: "contextual" | "volunteer-only";
+  onSegmentClick?: (segment: Segment) => void;
+};
+
+type LaneVariant =
+  | "gap"
+  | "gap-coverable-full"
+  | "gap-coverable-partial"
+  | "employee"
+  | "volunteer"
+  | "provisional";
+
+type LaneBlock = {
+  key: string;
+  startTime: string;
+  endTime: string;
+  label: string;
+  variant: LaneVariant;
+  editorSegment: Segment;
+};
+
+type CoverageItem = {
+  key: string;
+  label: string;
+  variant: LaneVariant;
+  editorSegment: Segment;
+};
+
+function formatDurationLabel(startTime: string, endTime: string) {
+  const durationMinutes = Math.max(0, differenceInMinutes(new Date(endTime), new Date(startTime)));
+  const hours = Math.floor(durationMinutes / 60);
+  const minutes = durationMinutes % 60;
+
+  if (minutes === 0) {
+    return `${hours}h`;
+  }
+
+  if (hours === 0) {
+    return `${minutes}m`;
+  }
+
+  return `${hours}h${String(minutes).padStart(2, "0")}`;
+}
+
+function shouldHideForFilter(
+  segment: Segment,
+  volunteerFilterId?: string,
+  filterMode: "contextual" | "volunteer-only" = "contextual",
+) {
+  if (!volunteerFilterId) {
+    return false;
+  }
+
+  const volunteerPresent = segment.volunteerAssignments.some(
+    (assignment) => assignment.volunteerId === volunteerFilterId,
+  );
+
+  if (filterMode === "volunteer-only") {
+    return !volunteerPresent;
+  }
+
+  return segment.missingCount === 0 && segment.volunteerAssignments.length > 0 && !volunteerPresent;
+}
+
+function getVolunteerCoverageItems(segment: Segment) {
+  return [...segment.volunteerAssignments]
+    .sort((a, b) => a.volunteerName.localeCompare(b.volunteerName))
+    .map<CoverageItem>((assignment) => ({
+      key: `volunteer:${assignment.volunteerId}:${assignment.status}`,
+      label: assignment.volunteerName,
+      variant: assignment.status === "PROVISIONAL" ? "provisional" : "volunteer",
+      editorSegment: {
+        ...segment,
+        volunteerAssignments: [assignment],
+        employeeBlocks: [],
+      },
+    }));
+}
+
+function getEmployeeCoverageItems(segment: Segment) {
+  return segment.employeeBlocks.map<CoverageItem>((block) => ({
+    key: `employee:${block.id}`,
+    label: block.label,
+    variant: "employee",
+    editorSegment: {
+      ...segment,
+      employeeBlocks: [],
+    },
+  }));
+}
+
+function createGapBlock(segment: Segment, laneIndex: number): LaneBlock {
+  const coverageContext = [
+    ...segment.volunteerAssignments.map((assignment) => `v:${assignment.volunteerId}`),
+    ...segment.employeeBlocks.map((block) => `e:${block.id}`),
+  ]
+    .sort()
+    .join("|");
+
+  return {
+    key: `gap:${laneIndex}:${coverageContext}`,
+    startTime: segment.startTime,
+    endTime: segment.endTime,
+    label: formatDurationLabel(segment.startTime, segment.endTime),
+    variant: "gap",
+    editorSegment: {
+      ...segment,
+      employeeBlocks: [],
+    },
+  };
+}
+
+function intervalsOverlap(startA: string, endA: string, startB: string, endB: string) {
+  return new Date(startA) < new Date(endB) && new Date(endA) > new Date(startB);
+}
+
+function intervalCovers(outerStart: string, outerEnd: string, innerStart: string, innerEnd: string) {
+  return new Date(outerStart) <= new Date(innerStart) && new Date(outerEnd) >= new Date(innerEnd);
+}
+
+function formatSuggestionLabel(names: string[]) {
+  if (names.length === 0) {
+    return "";
+  }
+
+  if (names.length <= 2) {
+    return names.join(", ");
+  }
+
+  return `${names.length} possibles`;
+}
+
+function getGapCoverageHint(block: LaneBlock, gapSuggestions: GapSuggestion[]) {
+  const fullCandidates = new Map<string, GapCoverageSuggestion>();
+  const partialCandidates = new Map<string, GapCoverageSuggestion>();
+
+  for (const gap of gapSuggestions) {
+    if (!intervalsOverlap(block.startTime, block.endTime, gap.startTime, gap.endTime)) {
+      continue;
+    }
+
+    for (const suggestion of [...gap.fullCoverageSuggestions, ...gap.partialCoverageSuggestions]) {
+      if (!intervalsOverlap(block.startTime, block.endTime, suggestion.startTime, suggestion.endTime)) {
+        continue;
+      }
+
+      if (intervalCovers(suggestion.startTime, suggestion.endTime, block.startTime, block.endTime)) {
+        fullCandidates.set(suggestion.id, suggestion);
+      } else {
+        partialCandidates.set(suggestion.id, suggestion);
+      }
+    }
+  }
+
+  for (const volunteerId of fullCandidates.keys()) {
+    partialCandidates.delete(volunteerId);
+  }
+
+  const fullNames = [...fullCandidates.values()].map((suggestion) => suggestion.name).sort();
+  const partialNames = [...partialCandidates.values()].map((suggestion) => suggestion.name).sort();
+
+  if (fullNames.length > 0) {
+    return {
+      variant: "gap-coverable-full" as const,
+      label: formatSuggestionLabel(fullNames),
+      title: `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}. Couverture complète possible: ${fullNames.join(", ")}`,
+    };
+  }
+
+  if (partialNames.length > 0) {
+    return {
+      variant: "gap-coverable-partial" as const,
+      label: formatSuggestionLabel(partialNames),
+      title: `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}. Couverture partielle possible: ${partialNames.join(", ")}`,
+    };
+  }
+
+  return null;
+}
+
+function buildLaneBlocks(
+  segments: Segment[],
+  volunteerFilterId?: string,
+  filterMode: "contextual" | "volunteer-only" = "contextual",
+) {
+  const visibleSegments = segments.filter((segment) => !shouldHideForFilter(segment, volunteerFilterId, filterMode));
+  const lanes: LaneBlock[][] = [[], []];
+  const previousLaneKeys: Array<string | null> = [null, null];
+
+  for (const segment of visibleSegments) {
+    const availableItems = [
+      ...getVolunteerCoverageItems(segment),
+      ...getEmployeeCoverageItems(segment),
+    ];
+    const laneItems: Array<CoverageItem | null> = [null, null];
+
+    for (let laneIndex = 0; laneIndex < 2; laneIndex += 1) {
+      const previousLaneKey = previousLaneKeys[laneIndex];
+      if (!previousLaneKey) {
+        continue;
+      }
+
+      const itemIndex = availableItems.findIndex((item) => item.key === previousLaneKey);
+      if (itemIndex >= 0) {
+        laneItems[laneIndex] = availableItems[itemIndex];
+        availableItems.splice(itemIndex, 1);
+      }
+    }
+
+    for (let laneIndex = 0; laneIndex < 2; laneIndex += 1) {
+      if (laneItems[laneIndex]) {
+        continue;
+      }
+
+      laneItems[laneIndex] = availableItems.shift() ?? null;
+    }
+
+    for (let laneIndex = 0; laneIndex < 2; laneIndex += 1) {
+      const item = laneItems[laneIndex];
+      const nextBlock =
+        item === null
+          ? createGapBlock(segment, laneIndex)
+          : {
+              key: item.key,
+              startTime: segment.startTime,
+              endTime: segment.endTime,
+              label: item.label,
+              variant: item.variant,
+              editorSegment: item.editorSegment,
+            };
+
+      const previousBlock = lanes[laneIndex].at(-1);
+
+      if (previousBlock && previousBlock.key === nextBlock.key && previousBlock.endTime === nextBlock.startTime) {
+        previousBlock.endTime = nextBlock.endTime;
+        previousBlock.editorSegment = {
+          ...previousBlock.editorSegment,
+          startTime: previousBlock.startTime,
+          endTime: nextBlock.endTime,
+        };
+
+        if (previousBlock.variant === "gap") {
+          previousBlock.label = formatDurationLabel(previousBlock.startTime, previousBlock.endTime);
+        }
+      } else {
+        lanes[laneIndex].push(nextBlock);
+      }
+
+      previousLaneKeys[laneIndex] = nextBlock.key;
+    }
+  }
+
+  return lanes;
+}
+
+function laneClasses(variant: LaneVariant) {
+  if (variant === "gap") {
+    return "bg-red-600 text-white border-red-800 shadow-[0_0_0_1px_rgba(127,29,29,1)] animate-[pulse_2.2s_ease-in-out_infinite]";
+  }
+
+  if (variant === "gap-coverable-full") {
+    return "bg-yellow-300 text-yellow-950 border-yellow-500 shadow-[0_0_0_1px_rgba(161,98,7,0.9)]";
+  }
+
+  if (variant === "gap-coverable-partial") {
+    return "bg-orange-400 text-white border-orange-700 shadow-[0_0_0_1px_rgba(154,52,18,0.9)]";
+  }
+
+  if (variant === "employee") {
+    return "bg-slate-500 text-white border-slate-700";
+  }
+
+  if (variant === "provisional") {
+    return "bg-orange-500 text-white border-orange-700";
+  }
+
+  return "bg-emerald-600 text-white border-emerald-800";
+}
+
+export function MonthTimeline({
+  dayTimelines,
+  volunteerFilterId,
+  gapSuggestions = [],
+  filterMode = "contextual",
+  onSegmentClick,
+}: MonthTimelineProps) {
+  return (
+    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+      <div className="min-w-[1100px]">
+        <div className="grid grid-cols-[120px_1fr] items-center border-b border-slate-200 bg-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+          <div>Jour</div>
+          <div className="grid grid-cols-24 gap-0">
+            {Array.from({ length: 24 }).map((_, hour) => (
+              <div key={hour} className="text-center">
+                {hour}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {dayTimelines.map((day) => {
+          const dayStart = new Date(day.dayStart);
+          const laneBlocks = buildLaneBlocks(day.segments, volunteerFilterId, filterMode);
+          const dayKey = format(dayStart, "yyyy-MM-dd");
+
+          if (laneBlocks.every((blocks) => blocks.length === 0)) {
+            return null;
+          }
+
+          return (
+            <div
+              key={day.dayStart}
+              className="grid grid-cols-[120px_1fr] items-center gap-0 border-b border-slate-100 px-3 py-1"
+            >
+              <div className="flex flex-col gap-1">
+                <div className="text-sm font-semibold text-slate-700">{formatShortDate(dayStart)}</div>
+                <div className="grid w-10 grid-rows-2 gap-1 text-[9px] font-bold uppercase tracking-wide text-slate-500">
+                  <span className="rounded bg-slate-100 px-1 py-0.5">A1</span>
+                  <span className="rounded bg-slate-100 px-1 py-0.5">A2</span>
+                </div>
+              </div>
+
+              <div className="space-y-1 py-0.5">
+                {laneBlocks.map((blocks, laneIndex) => (
+                  <div
+                    key={laneIndex}
+                    data-testid="timeline-lane"
+                    data-day={dayKey}
+                    data-lane={laneIndex}
+                    className="relative h-5 rounded-md border border-slate-200 bg-slate-50"
+                  >
+                    {blocks.map((block, index) => {
+                      const startTime = new Date(block.startTime);
+                      const endTime = new Date(block.endTime);
+                      const startOffsetMin = differenceInMinutes(startTime, dayStart);
+                      const durationMin = Math.max(20, differenceInMinutes(endTime, startTime));
+                      const left = (startOffsetMin / (24 * 60)) * 100;
+                      const width = (durationMin / (24 * 60)) * 100;
+                      const gapHint =
+                        block.variant === "gap" ? getGapCoverageHint(block, gapSuggestions) : null;
+                      const effectiveVariant = gapHint?.variant ?? block.variant;
+                      const title =
+                        block.variant === "gap"
+                          ? `${gapHint?.title ?? `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}`} ${formatHour(startTime)} - ${formatHour(endTime)}`
+                          : `${block.label} ${formatHour(startTime)} - ${formatHour(endTime)}`;
+                      const effectiveLabel = gapHint?.label ?? block.label;
+                      const textLabel = (block.variant === "gap" || gapHint) && width < 12 ? "" : effectiveLabel;
+
+                      return (
+                        <button
+                          type="button"
+                          key={`${block.key}-${block.startTime}-${block.endTime}-${index}`}
+                          data-testid="timeline-block"
+                          data-day={dayKey}
+                          data-lane={laneIndex}
+                          data-start-time={block.startTime}
+                          data-end-time={block.endTime}
+                          data-label={effectiveLabel}
+                          data-variant={effectiveVariant}
+                          aria-label={title}
+                          title={title}
+                          className={cn(
+                            "absolute top-0 bottom-0 overflow-hidden rounded-[4px] border px-1 text-left text-[9px] font-bold leading-4 whitespace-nowrap",
+                            onSegmentClick ? "cursor-pointer transition hover:brightness-110" : "",
+                            laneClasses(effectiveVariant),
+                          )}
+                          onClick={() => onSegmentClick?.(block.editorSegment)}
+                          style={{
+                            left: `${left}%`,
+                            width: `${width}%`,
+                          }}
+                        >
+                          {textLabel}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}

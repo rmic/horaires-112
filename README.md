@@ -1,36 +1,103 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Horaire 112
 
-## Getting Started
+Application web Next.js pour gerer le planning mensuel d'un service d'ambulance 112 belge.
 
-First, run the development server:
+## Stack
+- Next.js 16 + TypeScript
+- Prisma ORM
+- PostgreSQL
+- Tailwind CSS
+- Auth.js (`next-auth`) pour l'authentification manager
+- Playwright pour les tests UI
 
+## Perimetre V1
+- gestion des volontaires
+- encodage rapide des disponibilites
+- edition manuelle du planning mensuel
+- visualisation immediate des creneaux a couvrir
+- publication d'un horaire en lecture seule
+- export PDF
+- authentification manager via Google OAuth
+- Microsoft OAuth possible si configure, mais optionnel
+
+Le serveur MCP reste hors scope pour le deploiement web courant.
+
+## Demarrage local
+1. Installer les dependances:
+   ```bash
+   npm install
+   ```
+2. Copier l'environnement:
+   ```bash
+   cp .env.example .env
+   ```
+3. Demarrer PostgreSQL local:
+   ```bash
+   npm run db:up
+   ```
+4. Appliquer les migrations:
+   ```bash
+   npx prisma migrate deploy
+   ```
+5. Lancer l'application:
+   ```bash
+   npm run dev
+   ```
+6. Ouvrir:
+   - `http://localhost:3000/manager`
+
+## Variables d'environnement minimales
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:55432/horaire112?schema=public"
+DIRECT_URL="postgresql://postgres:postgres@127.0.0.1:55432/horaire112?schema=public"
+AUTH_SECRET="une-cle-longue-et-secrete"
+NEXTAUTH_URL="http://localhost:3000"
+MANAGER_ALLOWED_EMAILS="toi@gmail.com"
+AUTH_GOOGLE_ID="..."
+AUTH_GOOGLE_SECRET="..."
+ALLOW_OPEN_MANAGER_ACCESS="false"
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Managers autorises
+Deux options:
+- `MANAGER_ALLOWED_EMAILS` pour une allowlist rapide par emails exacts
+- la table `manager_access` pour une gestion durable avec role
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Commande utile:
+```bash
+npm run manager:upsert -- --email responsable@example.com --name "Responsable" --role PLANNER
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Commandes utiles
+```bash
+npm run db:up
+npm run db:down
+npm run db:logs
+npm run lint
+npm run build
+npm run test:auth
+npm run test:e2e
+npx prisma migrate deploy
+```
 
-## Learn More
+## CI/CD et deploiement
+La cible de deploiement retenue est:
+- Vercel pour l'application web
+- Neon pour PostgreSQL
+- GitHub Actions pour CI et deploiement pilote
 
-To learn more about Next.js, take a look at the following resources:
+Documentation detaillee:
+- [Deployment guide](docs/deployment.md)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Verification locale
+```bash
+npm run lint
+npm run build
+npm run test:auth
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Etat actuel du deploiement
+- application validee localement sur PostgreSQL
+- auth manager Google fonctionnelle
+- workflows GitHub Actions ajoutes pour CI, staging et production
+- deploiement Vercel pilote par GitHub Actions
