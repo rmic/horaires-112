@@ -1,7 +1,7 @@
 "use client";
 
 import { differenceInMinutes, format } from "date-fns";
-import { formatHour, formatShortDate } from "@/lib/time";
+import { formatAxisHour, formatHour, formatShortDate, remapFromDisplayAxis, remapToDisplayAxis } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 type Segment = {
@@ -47,6 +47,7 @@ type GapSuggestion = {
 
 type MonthTimelineProps = {
   dayTimelines: DayTimeline[];
+  axisStart?: string;
   volunteerFilterId?: string;
   gapSuggestions?: GapSuggestion[];
   filterMode?: "contextual" | "volunteer-only";
@@ -230,10 +231,13 @@ function getGapCoverageHint(block: LaneBlock, gapSuggestions: GapSuggestion[]) {
 }
 
 function buildLaneBlocks(
+  dayStart: string,
   segments: Segment[],
+  axisStart?: string,
   volunteerFilterId?: string,
   filterMode: "contextual" | "volunteer-only" = "contextual",
 ) {
+  const dayStartDate = new Date(dayStart);
   const visibleSegments = segments.filter((segment) => !shouldHideForFilter(segment, volunteerFilterId, filterMode));
   const lanes: LaneBlock[][] = [[], []];
   const previousLaneKeys: Array<string | null> = [null, null];
@@ -281,8 +285,19 @@ function buildLaneBlocks(
             };
 
       const previousBlock = lanes[laneIndex].at(-1);
+      const mappedStart = axisStart
+        ? remapToDisplayAxis(new Date(nextBlock.startTime), new Date(axisStart))
+        : new Date(nextBlock.startTime);
+      const mappedDayStart = axisStart ? remapToDisplayAxis(dayStartDate, new Date(axisStart)) : dayStartDate;
+      const boundaryMinutes = differenceInMinutes(mappedStart, mappedDayStart);
+      const isShiftBoundary = boundaryMinutes === 6 * 60 || boundaryMinutes === 18 * 60;
 
-      if (previousBlock && previousBlock.key === nextBlock.key && previousBlock.endTime === nextBlock.startTime) {
+      if (
+        previousBlock &&
+        previousBlock.key === nextBlock.key &&
+        previousBlock.endTime === nextBlock.startTime &&
+        !isShiftBoundary
+      ) {
         previousBlock.endTime = nextBlock.endTime;
         previousBlock.editorSegment = {
           ...previousBlock.editorSegment,
@@ -302,6 +317,34 @@ function buildLaneBlocks(
   }
 
   return lanes;
+}
+
+function splitSegmentsOnShiftBoundariesWithAxis(dayStart: string, segments: Segment[], axisStart?: string) {
+  const dayStartDate = new Date(dayStart);
+  const mappedDayStart = axisStart ? remapToDisplayAxis(dayStartDate, new Date(axisStart)) : dayStartDate;
+  const boundaries = [6, 18].map((hours) => new Date(mappedDayStart.getTime() + hours * 60 * 60 * 1000));
+
+  return segments.flatMap((segment) => {
+    const segmentStart = new Date(segment.startTime);
+    const segmentEnd = new Date(segment.endTime);
+    const mappedSegmentStart = axisStart ? remapToDisplayAxis(segmentStart, new Date(axisStart)) : segmentStart;
+    const mappedSegmentEnd = axisStart ? remapToDisplayAxis(segmentEnd, new Date(axisStart)) : segmentEnd;
+    const cutPoints = [segmentStart, segmentEnd];
+
+    for (const boundary of boundaries) {
+      if (boundary > mappedSegmentStart && boundary < mappedSegmentEnd) {
+        cutPoints.push(axisStart ? remapFromDisplayAxis(boundary, new Date(axisStart)) : boundary);
+      }
+    }
+
+    const sorted = [...new Set(cutPoints.map((value) => value.getTime()))].sort((a, b) => a - b);
+
+    return sorted.slice(0, -1).map((start, index) => ({
+      ...segment,
+      startTime: new Date(start).toISOString(),
+      endTime: new Date(sorted[index + 1]).toISOString(),
+    }));
+  });
 }
 
 function laneClasses(variant: LaneVariant) {
@@ -330,6 +373,7 @@ function laneClasses(variant: LaneVariant) {
 
 export function MonthTimeline({
   dayTimelines,
+  axisStart,
   volunteerFilterId,
   gapSuggestions = [],
   filterMode = "contextual",
@@ -351,8 +395,10 @@ export function MonthTimeline({
 
         {dayTimelines.map((day) => {
           const dayStart = new Date(day.dayStart);
-          const laneBlocks = buildLaneBlocks(day.segments, volunteerFilterId, filterMode);
+          const splitSegments = splitSegmentsOnShiftBoundariesWithAxis(day.dayStart, day.segments, axisStart);
+          const laneBlocks = buildLaneBlocks(day.dayStart, splitSegments, axisStart, volunteerFilterId, filterMode);
           const dayKey = format(dayStart, "yyyy-MM-dd");
+          const displayDayStart = axisStart ? remapToDisplayAxis(dayStart, new Date(axisStart)) : dayStart;
 
           if (laneBlocks.every((blocks) => blocks.length === 0)) {
             return null;
@@ -383,8 +429,10 @@ export function MonthTimeline({
                     {blocks.map((block, index) => {
                       const startTime = new Date(block.startTime);
                       const endTime = new Date(block.endTime);
-                      const startOffsetMin = differenceInMinutes(startTime, dayStart);
-                      const durationMin = Math.max(20, differenceInMinutes(endTime, startTime));
+                      const displayStart = axisStart ? remapToDisplayAxis(startTime, new Date(axisStart)) : startTime;
+                      const displayEnd = axisStart ? remapToDisplayAxis(endTime, new Date(axisStart)) : endTime;
+                      const startOffsetMin = differenceInMinutes(displayStart, displayDayStart);
+                      const durationMin = Math.max(20, differenceInMinutes(displayEnd, displayStart));
                       const left = (startOffsetMin / (24 * 60)) * 100;
                       const width = (durationMin / (24 * 60)) * 100;
                       const gapHint =
@@ -392,8 +440,8 @@ export function MonthTimeline({
                       const effectiveVariant = gapHint?.variant ?? block.variant;
                       const title =
                         block.variant === "gap"
-                          ? `${gapHint?.title ?? `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}`} ${formatHour(startTime)} - ${formatHour(endTime)}`
-                          : `${block.label} ${formatHour(startTime)} - ${formatHour(endTime)}`;
+                          ? `${gapHint?.title ?? `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}`} ${axisStart ? formatAxisHour(startTime, new Date(axisStart)) : formatHour(startTime)} - ${axisStart ? formatAxisHour(endTime, new Date(axisStart)) : formatHour(endTime)}`
+                          : `${block.label} ${axisStart ? formatAxisHour(startTime, new Date(axisStart)) : formatHour(startTime)} - ${axisStart ? formatAxisHour(endTime, new Date(axisStart)) : formatHour(endTime)}`;
                       const effectiveLabel = gapHint?.label ?? block.label;
                       const textLabel = (block.variant === "gap" || gapHint) && width < 12 ? "" : effectiveLabel;
 

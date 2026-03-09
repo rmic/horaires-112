@@ -102,8 +102,78 @@ function mergeAdjacentIntervals(intervals: Interval[]) {
   return merged;
 }
 
-export function mergeGapSegments(gaps: GapSegment[]) {
-  const sorted = [...gaps].sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
+export function mergeGapSegments(gaps: GapSegment[], axisStart?: Date) {
+  const isShiftBoundary = (time: Date) => {
+    if (axisStart) {
+      const diffMinutes = (time.getTime() - axisStart.getTime()) / (60 * 1000);
+      const normalized = ((diffMinutes % (24 * 60)) + 24 * 60) % (24 * 60);
+      return normalized === 6 * 60 || normalized === 18 * 60;
+    }
+
+    return time.getUTCHours() === 6 || time.getUTCHours() === 18;
+  };
+
+  const splitGaps = gaps.flatMap((gap) => {
+    const boundaries = [gap.startTime.getTime(), gap.endTime.getTime()];
+    const dayMilliseconds = 24 * 60 * 60 * 1000;
+    const baseStart = axisStart?.getTime();
+
+    if (baseStart !== undefined) {
+      const firstDayIndex = Math.floor((gap.startTime.getTime() - baseStart) / dayMilliseconds) - 1;
+      const lastDayIndex = Math.ceil((gap.endTime.getTime() - baseStart) / dayMilliseconds) + 1;
+
+      for (let dayIndex = firstDayIndex; dayIndex <= lastDayIndex; dayIndex += 1) {
+        for (const hourOffset of [6, 18]) {
+          const boundaryTime = baseStart + dayIndex * dayMilliseconds + hourOffset * 60 * 60 * 1000;
+          if (boundaryTime > gap.startTime.getTime() && boundaryTime < gap.endTime.getTime()) {
+            boundaries.push(boundaryTime);
+          }
+        }
+      }
+    } else {
+      const cursor = new Date(gap.startTime);
+      cursor.setUTCHours(0, 0, 0, 0);
+      cursor.setUTCDate(cursor.getUTCDate() - 1);
+
+      while (cursor < gap.endTime) {
+        const sixOClock = new Date(cursor);
+        sixOClock.setUTCHours(6, 0, 0, 0);
+        if (sixOClock > gap.startTime && sixOClock < gap.endTime) {
+          boundaries.push(sixOClock.getTime());
+        }
+
+        const eighteenOClock = new Date(cursor);
+        eighteenOClock.setUTCHours(18, 0, 0, 0);
+        if (eighteenOClock > gap.startTime && eighteenOClock < gap.endTime) {
+          boundaries.push(eighteenOClock.getTime());
+        }
+
+        cursor.setUTCDate(cursor.getUTCDate() + 1);
+      }
+    }
+
+    const sortedBoundaries = [...new Set(boundaries)].sort((a, b) => a - b);
+    const segments: GapSegment[] = [];
+
+    for (let index = 0; index < sortedBoundaries.length - 1; index += 1) {
+      const startTime = new Date(sortedBoundaries[index]);
+      const endTime = new Date(sortedBoundaries[index + 1]);
+
+      if (!isBefore(startTime, endTime)) {
+        continue;
+      }
+
+      segments.push({
+        startTime,
+        endTime,
+        missingCount: gap.missingCount,
+      });
+    }
+
+    return segments;
+  });
+
+  const sorted = splitGaps.sort((a, b) => a.startTime.getTime() - b.startTime.getTime());
   const merged: GapSegment[] = [];
 
   for (const gap of sorted) {
@@ -112,7 +182,8 @@ export function mergeGapSegments(gaps: GapSegment[]) {
     if (
       previous &&
       previous.missingCount === gap.missingCount &&
-      previous.endTime.getTime() === gap.startTime.getTime()
+      previous.endTime.getTime() === gap.startTime.getTime() &&
+      !isShiftBoundary(gap.startTime)
     ) {
       previous.endTime = gap.endTime;
     } else {

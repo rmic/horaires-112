@@ -14,7 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Table, TableCell, TableHead } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { formatDateTime, formatHour, toDateTimeInputValue } from "@/lib/time";
+import { formatAxisDateTime, formatAxisHour, formatDateTime, toDateTimeInputValue } from "@/lib/time";
 
 type Volunteer = {
   id: string;
@@ -651,8 +651,9 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
           status: "CONFIRMED",
         });
         await loadSelectedMonth();
+        const planningAxisStart = monthData ? new Date(monthData.month.startsAt) : new Date(suggestion.startTime);
         setFeedback(
-          `${suggestion.name} affecté du ${formatDateTime(new Date(suggestion.startTime))} au ${formatDateTime(new Date(suggestion.endTime))}.`,
+          `${suggestion.name} affecté du ${formatAxisDateTime(new Date(suggestion.startTime), planningAxisStart)} au ${formatAxisDateTime(new Date(suggestion.endTime), planningAxisStart)}.`,
         );
         setError("");
       } catch (value) {
@@ -661,7 +662,7 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
         setBusy(false);
       }
     },
-    [createAssignments, loadSelectedMonth],
+    [createAssignments, loadSelectedMonth, monthData],
   );
 
   return (
@@ -1100,7 +1101,6 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                       disabled={!availabilityVolunteerId || busy}
                       onCreateRange={async (startTime, endTime) => {
                         if (!availabilityVolunteerId) return;
-                        setBusy(true);
                         try {
                           await api(`/api/months/${monthData.month.id}/availabilities`, {
                             method: "POST",
@@ -1108,24 +1108,28 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                           });
                           await loadSelectedMonth();
                           setFeedback("Disponibilité ajoutée.");
+                          setError("");
                         } catch (value) {
                           setError(getError(value).message);
-                        } finally {
-                          setBusy(false);
                         }
                       }}
-                      onDeleteRange={async (availabilityId) => {
-                        setBusy(true);
+                      onDeleteRange={async (availabilityIds) => {
                         try {
-                          await api(`/api/availabilities/${availabilityId}`, {
-                            method: "DELETE",
-                          });
+                          for (const availabilityId of availabilityIds) {
+                            await api(`/api/availabilities/${availabilityId}`, {
+                              method: "DELETE",
+                            });
+                          }
                           await loadSelectedMonth();
-                          setFeedback("Disponibilité supprimée.");
+                          setFeedback(
+                            availabilityIds.length > 1
+                              ? "Disponibilités supprimées."
+                              : "Disponibilité supprimée.",
+                          );
+                          setError("");
                         } catch (value) {
+                          await loadSelectedMonth();
                           setError(getError(value).message);
-                        } finally {
-                          setBusy(false);
                         }
                       }}
                     />
@@ -1422,6 +1426,7 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                   </div>
                   <MonthTimeline
                     dayTimelines={monthData.dayTimelines}
+                    axisStart={monthData.month.startsAt}
                     volunteerFilterId={timelineVolunteerFilter || undefined}
                     gapSuggestions={gapSuggestions}
                     onSegmentClick={loadSegmentInEditor}
@@ -1436,12 +1441,17 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                     Noms disponibles par créneau à couvrir, séparés entre couverture complète et partielle. Cliquez un nom pour affecter automatiquement la plage proposée.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-2">
+                  <CardContent className="space-y-2">
+                  {monthData && (() => {
+                    const planningAxisStart = new Date(monthData.month.startsAt);
+
+                    return (
+                      <>
                   {gapSuggestions.length === 0 && <p className="text-sm text-emerald-700">Aucun créneau à couvrir.</p>}
                   {gapSuggestions.slice(0, 40).map((gap) => (
                     <div key={`${gap.startTime}-${gap.endTime}`} className="rounded-md border border-red-300 bg-red-50 p-2">
                       <p className="text-sm font-black text-red-800">
-                        {formatDateTime(new Date(gap.startTime))} - {formatDateTime(new Date(gap.endTime))}: couverture incomplète, {gap.missingCount} personne{gap.missingCount > 1 ? "s" : ""} manquante{gap.missingCount > 1 ? "s" : ""}
+                        {formatAxisDateTime(new Date(gap.startTime), planningAxisStart)} - {formatAxisDateTime(new Date(gap.endTime), planningAxisStart)}: couverture incomplète, {gap.missingCount} personne{gap.missingCount > 1 ? "s" : ""} manquante{gap.missingCount > 1 ? "s" : ""}
                       </p>
                       <div className="mt-2 grid gap-2 lg:grid-cols-2">
                         <div className="rounded-md border border-emerald-200 bg-white/80 p-2">
@@ -1492,7 +1502,7 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                                 <span>
                                   {suggestion.name}
                                   <span className="ml-1 text-[11px] font-medium text-amber-700">
-                                    {formatHour(new Date(suggestion.startTime))} - {formatHour(new Date(suggestion.endTime))} ({formatDurationLabel(suggestion.durationMinutes)})
+                                    {formatAxisHour(new Date(suggestion.startTime), planningAxisStart)} - {formatAxisHour(new Date(suggestion.endTime), planningAxisStart)} ({formatDurationLabel(suggestion.durationMinutes)})
                                   </span>
                                 </span>
                               </button>
@@ -1505,6 +1515,9 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                       </div>
                     </div>
                   ))}
+                      </>
+                    );
+                  })()}
                 </CardContent>
                 </Card>
 

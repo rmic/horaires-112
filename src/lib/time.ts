@@ -1,14 +1,4 @@
-import {
-  addHours,
-  addMonths,
-  eachDayOfInterval,
-  eachHourOfInterval,
-  endOfDay,
-  format,
-  isAfter,
-  isBefore,
-  startOfDay,
-} from "date-fns";
+import { addHours, addMonths, endOfDay, format, isAfter, isBefore, startOfDay } from "date-fns";
 import { fr } from "date-fns/locale";
 
 export type Interval = {
@@ -58,17 +48,27 @@ export function toDateTimeInputValue(date: Date) {
 }
 
 export function listMonthDays(startsAt: Date, endsAt: Date) {
-  return eachDayOfInterval({
-    start: startsAt,
-    end: addHours(endsAt, -1),
-  });
+  const days: Date[] = [];
+  const cursor = new Date(startsAt);
+
+  while (cursor < endsAt) {
+    days.push(new Date(cursor));
+    cursor.setTime(cursor.getTime() + 24 * 60 * 60 * 1000);
+  }
+
+  return days;
 }
 
 export function listHourStarts(startsAt: Date, endsAt: Date) {
-  return eachHourOfInterval({
-    start: startsAt,
-    end: addHours(endsAt, -1),
-  });
+  const hours: Date[] = [];
+  const cursor = new Date(startsAt);
+
+  while (cursor < endsAt) {
+    hours.push(new Date(cursor));
+    cursor.setTime(cursor.getTime() + 60 * 60 * 1000);
+  }
+
+  return hours;
 }
 
 export function clampInterval(interval: Interval, bounds: Interval): Interval | null {
@@ -109,4 +109,26 @@ export function formatDateTime(date: Date) {
 
 export function formatWeekLabel(start: Date, end: Date) {
   return `Semaine ${formatFrench(start, "dd/MM")} - ${formatFrench(end, "dd/MM")}`;
+}
+
+export function remapToDisplayAxis(date: Date, axisStart: Date) {
+  const displayAxisStart = new Date(axisStart);
+  displayAxisStart.setHours(0, 0, 0, 0);
+
+  return new Date(displayAxisStart.getTime() + (date.getTime() - axisStart.getTime()));
+}
+
+export function remapFromDisplayAxis(date: Date, axisStart: Date) {
+  const displayAxisStart = new Date(axisStart);
+  displayAxisStart.setHours(0, 0, 0, 0);
+
+  return new Date(axisStart.getTime() + (date.getTime() - displayAxisStart.getTime()));
+}
+
+export function formatAxisDateTime(date: Date, axisStart: Date) {
+  return formatDateTime(remapToDisplayAxis(date, axisStart));
+}
+
+export function formatAxisHour(date: Date, axisStart: Date) {
+  return formatHour(remapToDisplayAxis(date, axisStart));
 }

@@ -81,7 +81,7 @@ type WorkingAssignment = {
   volunteerColor: string;
 };
 
-function buildGapSummary(gaps: GapSegment[]) {
+function buildGapSummary(gaps: GapSegment[], axisStart?: Date) {
   const missingStaffMinutes = gaps.reduce(
     (total, gap) => total + differenceInMinutes(gap.endTime, gap.startTime) * gap.missingCount,
     0,
@@ -89,7 +89,7 @@ function buildGapSummary(gaps: GapSegment[]) {
 
   return {
     gapSegmentCount: gaps.length,
-    mergedGapCount: mergeGapSegments(gaps).length,
+    mergedGapCount: mergeGapSegments(gaps, axisStart).length,
     missingStaffHours: Math.round((missingStaffMinutes / 60) * 10) / 10,
   };
 }
@@ -269,7 +269,7 @@ export async function getSchedule(params: {
     coverageSegments: window.segments,
     dayTimelines: window.dayTimelines,
     gaps: window.gaps,
-    gapSummary: buildGapSummary(window.gaps),
+    gapSummary: buildGapSummary(window.gaps, month.startsAt),
   };
 }
 
@@ -342,7 +342,7 @@ export async function getStaffingGaps(params: {
 }) {
   const schedule = await getSchedule(params);
   const volunteerContexts = await getVolunteerCandidateContexts(schedule.month.id);
-  const mergedGaps = mergeGapSegments(schedule.gaps);
+  const mergedGaps = mergeGapSegments(schedule.gaps, schedule.month.startsAt);
 
   return mergedGaps.map((gap) => {
     const suggestions = suggestCandidatesForGap(gap, volunteerContexts);
@@ -662,9 +662,9 @@ export async function previewScheduleAdjustment(scheduleAdjustmentDraftId: strin
   const preview = {
     valid: issues.length === 0,
     issues,
-    before: buildGapSummary(beforeWindow.gaps),
-    after: buildGapSummary(afterWindow.gaps),
-    resultingGaps: mergeGapSegments(afterWindow.gaps).map((gap) => ({
+    before: buildGapSummary(beforeWindow.gaps, monthSchedule.startsAt),
+    after: buildGapSummary(afterWindow.gaps, monthSchedule.startsAt),
+    resultingGaps: mergeGapSegments(afterWindow.gaps, monthSchedule.startsAt).map((gap) => ({
       startTime: gap.startTime.toISOString(),
       endTime: gap.endTime.toISOString(),
       missingCount: gap.missingCount,

@@ -1,7 +1,7 @@
 import { AvailabilityStatus } from "@prisma/client";
-import { eachDayOfInterval } from "date-fns";
 import { prisma } from "@/lib/prisma";
 import { computeCoverageSegments, getGapSegments, splitCoverageByDay } from "@/lib/coverage";
+import { listMonthDays } from "@/lib/time";
 
 export async function getMonthSnapshot(monthId: string) {
   const month = await prisma.planningMonth.findUnique({
@@ -52,10 +52,7 @@ export async function getMonthSnapshot(monthId: string) {
     return null;
   }
 
-  const dayBoundaries = eachDayOfInterval({
-    start: month.startsAt,
-    end: month.endsAt,
-  });
+  const dayBoundaries = listMonthDays(month.startsAt, month.endsAt);
 
   const segments = computeCoverageSegments({
     rangeStart: month.startsAt,
