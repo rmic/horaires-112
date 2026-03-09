@@ -666,10 +666,10 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
 
   return (
     <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-6 md:px-6">
-      <div className="rounded-2xl border border-slate-200 bg-gradient-to-r from-amber-100 via-white to-sky-100 p-5 shadow-sm">
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-900">Horaire 112 - Manager</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900">Horaire 112 - Manager</h1>
             <p className="text-sm text-slate-700">
               V1 mono-ambulance: saisie rapide des disponibilités, planning mensuel, vue publique lecture seule.
             </p>
