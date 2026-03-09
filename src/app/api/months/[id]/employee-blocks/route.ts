@@ -4,6 +4,7 @@ import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { validateEmployeeBlock } from "@/lib/constraints";
 import { prisma } from "@/lib/prisma";
 import { generateFixedEmployeeBlocks } from "@/lib/server/employee-blocks";
+import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
 import { parseDateInput } from "@/lib/time";
 
 export const runtime = "nodejs";
@@ -39,6 +40,7 @@ export const GET = (_request: Request, context: { params: Promise<{ id: string }
 
 export const POST = (request: Request, context: { params: Promise<{ id: string }> }) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const { id: planningMonthId } = await context.params;
 
     const month = await prisma.planningMonth.findUnique({ where: { id: planningMonthId } });

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
 
 export const runtime = "nodejs";
 
@@ -33,6 +34,7 @@ export const GET = () =>
 
 export const POST = (request: Request) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const body = volunteerSchema.safeParse(await readJson<unknown>(request));
     if (!body.success) {
       throw new ApiError(400, "Formulaire volontaire invalide.", body.error.flatten());

@@ -1,7 +1,7 @@
 "use client";
 
 import { LockKeyhole } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,6 +27,23 @@ export function ManagerLoginCard({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [embeddedBrowser, setEmbeddedBrowser] = useState(false);
+
+  useEffect(() => {
+    const userAgent = navigator.userAgent || "";
+    const embeddedPatterns = [
+      "FBAN",
+      "FBAV",
+      "FB_IAB",
+      "Instagram",
+      "Line/",
+      "MicroMessenger",
+      "Twitter",
+      "LinkedInApp",
+    ];
+
+    setEmbeddedBrowser(embeddedPatterns.some((pattern) => userAgent.includes(pattern)));
+  }, []);
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-lg items-center px-4">
@@ -55,12 +72,18 @@ export function ManagerLoginCard({
           {oauthProviders.length > 0 && (
             <div className="space-y-2">
               <Label>Connexion OAuth</Label>
+              {embeddedBrowser && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+                  Google bloque la connexion depuis les navigateurs intégrés à Messenger, Facebook ou Instagram.
+                  Ouvrez cette page dans Safari ou Chrome, puis réessayez.
+                </div>
+              )}
               <div className="grid gap-2">
                 {oauthProviders.map((provider) => (
                   <Button
                     key={provider.id}
                     variant="secondary"
-                    disabled={busy}
+                    disabled={busy || embeddedBrowser}
                     onClick={async () => {
                       setBusy(true);
                       setError("");
@@ -74,10 +97,16 @@ export function ManagerLoginCard({
                       }
                     }}
                   >
-                    Continuer avec {provider.label}
+                    {embeddedBrowser ? `Ouvrir dans Safari/Chrome pour ${provider.label}` : `Continuer avec ${provider.label}`}
                   </Button>
                 ))}
               </div>
+              {embeddedBrowser && (
+                <p className="text-xs text-slate-600">
+                  Sur iPhone dans Messenger: menu <span className="font-semibold">...</span> puis{" "}
+                  <span className="font-semibold">Ouvrir dans Safari</span>.
+                </p>
+              )}
             </div>
           )}
 

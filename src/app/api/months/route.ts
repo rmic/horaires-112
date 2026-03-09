@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { generateFixedEmployeeBlocks } from "@/lib/server/employee-blocks";
+import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
 import { getMonthBounds } from "@/lib/time";
 
 export const runtime = "nodejs";
@@ -32,6 +33,7 @@ export const GET = () =>
 
 export const POST = (request: Request) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const body = createMonthSchema.safeParse(await readJson<unknown>(request));
     if (!body.success) {
       throw new ApiError(400, "Formulaire mois invalide.", body.error.flatten());

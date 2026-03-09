@@ -4,6 +4,7 @@ import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { generateDraftAssignments } from "@/lib/draft";
 import { prisma } from "@/lib/prisma";
 import { logAssignmentEvent } from "@/lib/server/events";
+import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,7 @@ const draftSchema = z.object({
 
 export const POST = (request: Request, context: { params: Promise<{ id: string }> }) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const { id: planningMonthId } = await context.params;
 
     const body = draftSchema.safeParse(await readJson<unknown>(request));

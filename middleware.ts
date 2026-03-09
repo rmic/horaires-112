@@ -40,10 +40,6 @@ function buildLoginRedirect(request: NextRequest, errorCode?: string) {
   return NextResponse.redirect(loginUrl);
 }
 
-function isReadOnlyMethod(method: string) {
-  return method === "GET" || method === "HEAD" || method === "OPTIONS";
-}
-
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -76,15 +72,6 @@ export async function middleware(request: NextRequest) {
   const hasOAuthManagerSession = Boolean(authToken?.managerAuthorized);
 
   if (hasOAuthManagerSession || hasPasswordFallbackSession) {
-    if (
-      isProtectedApiRoute(pathname) &&
-      !isReadOnlyMethod(request.method) &&
-      !hasPasswordFallbackSession &&
-      authToken?.managerRole !== "PLANNER"
-    ) {
-      return NextResponse.json({ error: "Permission insuffisante pour modifier les données." }, { status: 403 });
-    }
-
     return NextResponse.next();
   }
 

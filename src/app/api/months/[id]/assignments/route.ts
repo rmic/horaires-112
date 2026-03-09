@@ -2,6 +2,7 @@ import { AssignmentSource, AssignmentStatus } from "@prisma/client";
 import { z } from "zod";
 import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { createAssignments, listAssignments } from "@/lib/server/assignment-service";
+import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
 import { parseDateInput } from "@/lib/time";
 
 export const runtime = "nodejs";
@@ -30,6 +31,7 @@ export const GET = (_request: Request, context: { params: Promise<{ id: string }
 
 export const POST = (request: Request, context: { params: Promise<{ id: string }> }) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const { id: planningMonthId } = await context.params;
 
     const body = createAssignmentSchema.safeParse(await readJson<unknown>(request));

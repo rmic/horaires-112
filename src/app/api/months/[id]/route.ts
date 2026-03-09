@@ -2,6 +2,7 @@ import { z } from "zod";
 import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { getMonthSnapshot } from "@/lib/server/month-data";
+import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
 
 export const runtime = "nodejs";
 
@@ -51,6 +52,7 @@ export const GET = (request: Request, context: { params: Promise<{ id: string }>
 
 export const PATCH = (request: Request, context: { params: Promise<{ id: string }> }) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const { id } = await context.params;
 
     const body = patchSchema.safeParse(await readJson<unknown>(request));
@@ -70,6 +72,7 @@ export const PATCH = (request: Request, context: { params: Promise<{ id: string 
 
 export const DELETE = (_request: Request, context: { params: Promise<{ id: string }> }) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const { id } = await context.params;
 
     await prisma.planningMonth.delete({

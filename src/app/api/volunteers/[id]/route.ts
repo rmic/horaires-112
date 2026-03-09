@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
 
 export const runtime = "nodejs";
 
@@ -14,6 +15,7 @@ const patchSchema = z.object({
 
 export const PATCH = (request: Request, context: { params: Promise<{ id: string }> }) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const { id } = await context.params;
     const body = patchSchema.safeParse(await readJson<unknown>(request));
     if (!body.success) {
@@ -33,6 +35,7 @@ export const PATCH = (request: Request, context: { params: Promise<{ id: string 
 
 export const DELETE = (_request: Request, context: { params: Promise<{ id: string }> }) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const { id } = await context.params;
 
     const assignmentCount = await prisma.assignment.count({

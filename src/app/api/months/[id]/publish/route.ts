@@ -3,6 +3,7 @@ import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { hashPassword } from "@/lib/password";
 import { prisma } from "@/lib/prisma";
 import { logAssignmentEvent } from "@/lib/server/events";
+import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,7 @@ const publishSchema = z.object({
 
 export const POST = (request: Request, context: { params: Promise<{ id: string }> }) =>
   withApiError(async () => {
+    await requirePlannerAccess();
     const { id } = await context.params;
     const body = publishSchema.safeParse(await readJson<unknown>(request));
 
