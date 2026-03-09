@@ -45,6 +45,14 @@ type GapSuggestion = {
   partialCoverageSuggestions: GapCoverageSuggestion[];
 };
 
+type GapCoverageHint = {
+  variant: "gap-coverable-full" | "gap-coverable-partial";
+  label: string;
+  title: string;
+  fullSuggestions: GapCoverageSuggestion[];
+  partialSuggestions: GapCoverageSuggestion[];
+};
+
 type MonthTimelineProps = {
   dayTimelines: DayTimeline[];
   axisStart?: string;
@@ -185,7 +193,50 @@ function formatSuggestionLabel(names: string[]) {
   return `${names.length} possibles`;
 }
 
-function getGapCoverageHint(block: LaneBlock, gapSuggestions: GapSuggestion[]) {
+function formatGapHintLabel(
+  fullSuggestions: GapCoverageSuggestion[],
+  partialSuggestions: GapCoverageSuggestion[],
+) {
+  const fullNames = fullSuggestions.map((suggestion) => suggestion.name);
+  const partialNames = partialSuggestions.map((suggestion) => `${suggestion.name}*`);
+  const combinedNames = [...fullNames, ...partialNames];
+
+  if (partialSuggestions.length === 0) {
+    return formatSuggestionLabel(fullNames);
+  }
+
+  if (combinedNames.length <= 3) {
+    return combinedNames.join(", ");
+  }
+
+  if (partialNames.length <= 2) {
+    return [fullNames.length > 0 ? `${fullNames.length} complets` : "", partialNames.join(", ")]
+      .filter(Boolean)
+      .join(" + ");
+  }
+
+  if (fullNames.length === 0) {
+    return `${partialNames.length} partiels`;
+  }
+
+  return `${fullNames.length} complets + ${partialNames.length} partiels`;
+}
+
+function formatSuggestionWindow(suggestion: GapCoverageSuggestion, axisStart?: Date) {
+  const startTime = new Date(suggestion.startTime);
+  const endTime = new Date(suggestion.endTime);
+
+  const startLabel = axisStart ? formatAxisHour(startTime, axisStart) : formatHour(startTime);
+  const endLabel = axisStart ? formatAxisHour(endTime, axisStart) : formatHour(endTime);
+
+  return `${suggestion.name} ${startLabel}-${endLabel}`;
+}
+
+function getGapCoverageHint(
+  block: LaneBlock,
+  gapSuggestions: GapSuggestion[],
+  axisStart?: Date,
+): GapCoverageHint | null {
   const fullCandidates = new Map<string, GapCoverageSuggestion>();
   const partialCandidates = new Map<string, GapCoverageSuggestion>();
 
@@ -211,22 +262,41 @@ function getGapCoverageHint(block: LaneBlock, gapSuggestions: GapSuggestion[]) {
     partialCandidates.delete(volunteerId);
   }
 
-  const fullNames = [...fullCandidates.values()].map((suggestion) => suggestion.name).sort();
-  const partialNames = [...partialCandidates.values()].map((suggestion) => suggestion.name).sort();
+  const fullSuggestions = [...fullCandidates.values()].sort((left, right) => left.name.localeCompare(right.name));
+  const partialSuggestions = [...partialCandidates.values()].sort((left, right) => left.name.localeCompare(right.name));
+  const fullNames = fullSuggestions.map((suggestion) => suggestion.name);
+  const partialNames = partialSuggestions.map((suggestion) => suggestion.name);
 
   if (fullNames.length > 0) {
+    const titleSections = [
+      `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}.`,
+      "Couverture complète possible:",
+      ...fullSuggestions.map((suggestion) => `- ${formatSuggestionWindow(suggestion, axisStart)}`),
+    ];
+
+    if (partialSuggestions.length > 0) {
+      titleSections.push(
+        "Couverture partielle possible:",
+        ...partialSuggestions.map((suggestion) => `- ${formatSuggestionWindow(suggestion, axisStart)}`),
+      );
+    }
+
     return {
       variant: "gap-coverable-full" as const,
-      label: formatSuggestionLabel(fullNames),
-      title: `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}. Couverture complète possible: ${fullNames.join(", ")}`,
+      label: formatGapHintLabel(fullSuggestions, partialSuggestions),
+      title: titleSections.join("\n"),
+      fullSuggestions,
+      partialSuggestions,
     };
   }
 
   if (partialNames.length > 0) {
     return {
       variant: "gap-coverable-partial" as const,
-      label: formatSuggestionLabel(partialNames),
-      title: `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}. Couverture partielle possible: ${partialNames.join(", ")}`,
+      label: formatGapHintLabel([], partialSuggestions),
+      title: `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}.\nCouverture partielle possible:\n${partialSuggestions.map((suggestion) => `- ${formatSuggestionWindow(suggestion, axisStart)}`).join("\n")}`,
+      fullSuggestions: [],
+      partialSuggestions,
     };
   }
 
@@ -490,7 +560,7 @@ export function MonthTimeline({
                     data-testid="timeline-lane"
                     data-day={dayKey}
                     data-lane={laneIndex}
-                    className="relative h-5 rounded-md border border-slate-200 bg-slate-50"
+                    className="relative z-0 h-5 rounded-md border border-slate-200 bg-slate-50 hover:z-20"
                   >
                     {blocks.map((block, index) => {
                       const startTime = new Date(block.startTime);
@@ -504,12 +574,28 @@ export function MonthTimeline({
                       const left = (startOffsetMin / (24 * 60)) * 100;
                       const width = (durationMin / (24 * 60)) * 100;
                       const gapHint =
-                        block.variant === "gap" ? getGapCoverageHint(block, gapSuggestions) : null;
+                        block.variant === "gap"
+                          ? getGapCoverageHint(
+                              block,
+                              gapSuggestions,
+                              axisStart ? new Date(axisStart) : undefined,
+                            )
+                          : null;
                       const effectiveVariant = gapHint?.variant ?? block.variant;
+                      const startLabel = axisStart
+                        ? formatAxisHour(logicalStartTime, new Date(axisStart))
+                        : formatHour(logicalStartTime);
+                      const endLabel = axisStart
+                        ? formatAxisHour(logicalEndTime, new Date(axisStart))
+                        : formatHour(logicalEndTime);
                       const title =
                         block.variant === "gap"
-                          ? `${gapHint?.title ?? `Créneau à couvrir ${formatDurationLabel(block.logicalStartTime ?? block.startTime, block.logicalEndTime ?? block.endTime)}`} ${axisStart ? formatAxisHour(logicalStartTime, new Date(axisStart)) : formatHour(logicalStartTime)} - ${axisStart ? formatAxisHour(logicalEndTime, new Date(axisStart)) : formatHour(logicalEndTime)}`
-                          : `${block.label} ${axisStart ? formatAxisHour(logicalStartTime, new Date(axisStart)) : formatHour(logicalStartTime)} - ${axisStart ? formatAxisHour(logicalEndTime, new Date(axisStart)) : formatHour(logicalEndTime)}`;
+                          ? gapHint?.title ??
+                            `Créneau à couvrir ${formatDurationLabel(
+                              block.logicalStartTime ?? block.startTime,
+                              block.logicalEndTime ?? block.endTime,
+                            )} ${startLabel} - ${endLabel}`
+                          : `${block.label} ${startLabel} - ${endLabel}`;
                       const effectiveLabel = gapHint?.label ?? block.label;
                       const displayLabel =
                         block.variant === "gap" && !gapHint
@@ -536,7 +622,7 @@ export function MonthTimeline({
                           aria-label={title}
                           title={title}
                           className={cn(
-                            "absolute top-0 bottom-0 overflow-hidden rounded-[4px] border px-1 text-left text-[9px] font-bold leading-4 whitespace-nowrap",
+                            "group absolute top-0 bottom-0 overflow-visible rounded-[4px] border px-1 text-left text-[9px] font-bold leading-4 whitespace-nowrap",
                             onSegmentClick ? "cursor-pointer transition hover:brightness-110" : "",
                             laneClasses(effectiveVariant),
                           )}
@@ -546,7 +632,62 @@ export function MonthTimeline({
                             width: `${width}%`,
                           }}
                         >
-                          {textLabel}
+                          <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{textLabel}</span>
+                          {gapHint ? (
+                            <span className="pointer-events-none invisible absolute left-1/2 top-full z-30 mt-1 w-max min-w-56 max-w-80 -translate-x-1/2 rounded-md bg-slate-900 px-3 py-2 text-left text-[11px] font-medium leading-4 text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100">
+                              {gapHint.fullSuggestions.length > 0 ? (
+                                <span className="block">
+                                  <span className="block font-semibold">Couverture complète possible</span>
+                                  <span className="mt-1 block space-y-1">
+                                    {gapHint.fullSuggestions.map((suggestion) => {
+                                      const suggestionStart = new Date(suggestion.startTime);
+                                      const suggestionEnd = new Date(suggestion.endTime);
+                                      const suggestionStartLabel = axisStart
+                                        ? formatAxisHour(suggestionStart, new Date(axisStart))
+                                        : formatHour(suggestionStart);
+                                      const suggestionEndLabel = axisStart
+                                        ? formatAxisHour(suggestionEnd, new Date(axisStart))
+                                        : formatHour(suggestionEnd);
+
+                                      return (
+                                        <span key={`full-${suggestion.id}`} className="block">
+                                          {suggestion.name} {suggestionStartLabel}-{suggestionEndLabel}
+                                        </span>
+                                      );
+                                    })}
+                                  </span>
+                                </span>
+                              ) : null}
+                              {gapHint.partialSuggestions.length > 0 ? (
+                                <span className={cn("block", gapHint.fullSuggestions.length > 0 ? "mt-2" : "")}>
+                                  <span className="block font-semibold">Couverture partielle possible</span>
+                                  <span className="mt-1 block space-y-1">
+                                    {gapHint.partialSuggestions.map((suggestion) => {
+                                      const suggestionStart = new Date(suggestion.startTime);
+                                      const suggestionEnd = new Date(suggestion.endTime);
+                                      const suggestionStartLabel = axisStart
+                                        ? formatAxisHour(suggestionStart, new Date(axisStart))
+                                        : formatHour(suggestionStart);
+                                      const suggestionEndLabel = axisStart
+                                        ? formatAxisHour(suggestionEnd, new Date(axisStart))
+                                        : formatHour(suggestionEnd);
+
+                                      return (
+                                        <span key={`partial-${suggestion.id}`} className="block">
+                                          {suggestion.name} {suggestionStartLabel}-{suggestionEndLabel}
+                                        </span>
+                                      );
+                                    })}
+                                  </span>
+                                </span>
+                              ) : null}
+                              {gapHint.partialSuggestions.length > 0 && gapHint.fullSuggestions.length > 0 ? (
+                                <span className="mt-2 block text-[10px] text-slate-300">
+                                  `*` dans le bloc = couverture partielle uniquement
+                                </span>
+                              ) : null}
+                            </span>
+                          ) : null}
                         </button>
                       );
                     })}
