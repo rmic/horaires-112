@@ -620,7 +620,6 @@ export function MonthTimeline({
                           data-label={displayLabel}
                           data-variant={effectiveVariant}
                           aria-label={title}
-                          title={title}
                           className={cn(
                             "group absolute top-0 bottom-0 overflow-visible rounded-[4px] border px-1 text-left text-[9px] font-bold leading-4 whitespace-nowrap",
                             onSegmentClick ? "cursor-pointer transition hover:brightness-110" : "",
