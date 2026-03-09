@@ -69,6 +69,9 @@ type LaneBlock = {
   label: string;
   variant: LaneVariant;
   editorSegment: Segment;
+  logicalStartTime?: string;
+  logicalEndTime?: string;
+  continuedFromPreviousDay?: boolean;
 };
 
 type CoverageItem = {
@@ -379,6 +382,70 @@ export function MonthTimeline({
   filterMode = "contextual",
   onSegmentClick,
 }: MonthTimelineProps) {
+  const preparedDays = (() => {
+    const days = dayTimelines.map((day) => {
+      const splitSegments = splitSegmentsOnShiftBoundariesWithAxis(day.dayStart, day.segments, axisStart);
+      const laneBlocks = buildLaneBlocks(day.dayStart, splitSegments, axisStart, volunteerFilterId, filterMode).map(
+        (blocks) =>
+          blocks.map((block) => ({
+            ...block,
+            logicalStartTime: block.startTime,
+            logicalEndTime: block.endTime,
+            continuedFromPreviousDay: false,
+          })),
+      );
+
+      return {
+        ...day,
+        laneBlocks,
+      };
+    });
+
+    const activeChains: Array<
+      | {
+          key: string;
+          endTime: string;
+          logicalStartTime: string;
+          blocks: LaneBlock[];
+        }
+      | null
+    > = [null, null];
+
+    for (const day of days) {
+      for (let laneIndex = 0; laneIndex < day.laneBlocks.length; laneIndex += 1) {
+        const blocks = day.laneBlocks[laneIndex];
+        const firstBlock = blocks[0];
+        const chain = activeChains[laneIndex];
+
+        if (firstBlock && chain && chain.key === firstBlock.key && chain.endTime === firstBlock.startTime) {
+          chain.blocks.push(firstBlock);
+          chain.endTime = firstBlock.endTime;
+
+          for (const block of chain.blocks) {
+            block.logicalStartTime = chain.logicalStartTime;
+            block.logicalEndTime = chain.endTime;
+          }
+
+          firstBlock.continuedFromPreviousDay = true;
+        }
+
+        const lastBlock = blocks.at(-1);
+        if (lastBlock && lastBlock.endTime === day.dayEnd) {
+          activeChains[laneIndex] = {
+            key: lastBlock.key,
+            endTime: lastBlock.logicalEndTime ?? lastBlock.endTime,
+            logicalStartTime: lastBlock.logicalStartTime ?? lastBlock.startTime,
+            blocks: [lastBlock],
+          };
+        } else {
+          activeChains[laneIndex] = null;
+        }
+      }
+    }
+
+    return days;
+  })();
+
   return (
     <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
       <div className="min-w-[1100px]">
@@ -393,10 +460,9 @@ export function MonthTimeline({
           </div>
         </div>
 
-        {dayTimelines.map((day) => {
+        {preparedDays.map((day) => {
           const dayStart = new Date(day.dayStart);
-          const splitSegments = splitSegmentsOnShiftBoundariesWithAxis(day.dayStart, day.segments, axisStart);
-          const laneBlocks = buildLaneBlocks(day.dayStart, splitSegments, axisStart, volunteerFilterId, filterMode);
+          const laneBlocks = day.laneBlocks;
           const dayKey = format(dayStart, "yyyy-MM-dd");
           const displayDayStart = axisStart ? remapToDisplayAxis(dayStart, new Date(axisStart)) : dayStart;
 
@@ -429,6 +495,8 @@ export function MonthTimeline({
                     {blocks.map((block, index) => {
                       const startTime = new Date(block.startTime);
                       const endTime = new Date(block.endTime);
+                      const logicalStartTime = new Date(block.logicalStartTime ?? block.startTime);
+                      const logicalEndTime = new Date(block.logicalEndTime ?? block.endTime);
                       const displayStart = axisStart ? remapToDisplayAxis(startTime, new Date(axisStart)) : startTime;
                       const displayEnd = axisStart ? remapToDisplayAxis(endTime, new Date(axisStart)) : endTime;
                       const startOffsetMin = differenceInMinutes(displayStart, displayDayStart);
@@ -440,10 +508,19 @@ export function MonthTimeline({
                       const effectiveVariant = gapHint?.variant ?? block.variant;
                       const title =
                         block.variant === "gap"
-                          ? `${gapHint?.title ?? `Créneau à couvrir ${formatDurationLabel(block.startTime, block.endTime)}`} ${axisStart ? formatAxisHour(startTime, new Date(axisStart)) : formatHour(startTime)} - ${axisStart ? formatAxisHour(endTime, new Date(axisStart)) : formatHour(endTime)}`
-                          : `${block.label} ${axisStart ? formatAxisHour(startTime, new Date(axisStart)) : formatHour(startTime)} - ${axisStart ? formatAxisHour(endTime, new Date(axisStart)) : formatHour(endTime)}`;
+                          ? `${gapHint?.title ?? `Créneau à couvrir ${formatDurationLabel(block.logicalStartTime ?? block.startTime, block.logicalEndTime ?? block.endTime)}`} ${axisStart ? formatAxisHour(logicalStartTime, new Date(axisStart)) : formatHour(logicalStartTime)} - ${axisStart ? formatAxisHour(logicalEndTime, new Date(axisStart)) : formatHour(logicalEndTime)}`
+                          : `${block.label} ${axisStart ? formatAxisHour(logicalStartTime, new Date(axisStart)) : formatHour(logicalStartTime)} - ${axisStart ? formatAxisHour(logicalEndTime, new Date(axisStart)) : formatHour(logicalEndTime)}`;
                       const effectiveLabel = gapHint?.label ?? block.label;
-                      const textLabel = (block.variant === "gap" || gapHint) && width < 12 ? "" : effectiveLabel;
+                      const displayLabel =
+                        block.variant === "gap" && !gapHint
+                          ? formatDurationLabel(block.logicalStartTime ?? block.startTime, block.logicalEndTime ?? block.endTime)
+                          : effectiveLabel;
+                      const textLabel =
+                        (block.variant === "gap" || gapHint) && width < 12
+                          ? ""
+                          : block.continuedFromPreviousDay && block.variant === "gap"
+                            ? ""
+                            : displayLabel;
 
                       return (
                         <button
@@ -454,7 +531,7 @@ export function MonthTimeline({
                           data-lane={laneIndex}
                           data-start-time={block.startTime}
                           data-end-time={block.endTime}
-                          data-label={effectiveLabel}
+                          data-label={displayLabel}
                           data-variant={effectiveVariant}
                           aria-label={title}
                           title={title}
