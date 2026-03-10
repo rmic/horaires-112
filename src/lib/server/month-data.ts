@@ -1,7 +1,7 @@
 import { AvailabilityStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { computeCoverageSegments, getGapSegments, splitCoverageByDay } from "@/lib/coverage";
-import { listMonthDays } from "@/lib/time";
+import { getPlanningMonthWindow, listMonthDays } from "@/lib/time";
 
 export async function getMonthSnapshot(monthId: string) {
   const month = await prisma.planningMonth.findUnique({
@@ -52,11 +52,12 @@ export async function getMonthSnapshot(monthId: string) {
     return null;
   }
 
-  const dayBoundaries = listMonthDays(month.startsAt, month.endsAt);
+  const window = getPlanningMonthWindow(month);
+  const dayBoundaries = listMonthDays(window.displayStart, window.displayEnd);
 
   const segments = computeCoverageSegments({
-    rangeStart: month.startsAt,
-    rangeEnd: month.endsAt,
+    rangeStart: window.coverageStart,
+    rangeEnd: window.coverageEnd,
     assignments: month.assignments.map((assignment) => ({
       id: assignment.id,
       volunteerId: assignment.volunteerId,
@@ -76,11 +77,17 @@ export async function getMonthSnapshot(monthId: string) {
     forceHourlyBoundaries: true,
   });
 
-  const dayTimelines = splitCoverageByDay(month.startsAt, month.endsAt, segments);
+  const dayTimelines = splitCoverageByDay(window.displayStart, window.displayEnd, segments);
   const gaps = getGapSegments(segments);
 
   return {
-    month,
+    month: {
+      ...month,
+      startsAt: window.displayStart,
+      endsAt: window.displayEnd,
+      coverageStartsAt: window.coverageStart,
+      coverageEndsAt: window.coverageEnd,
+    },
     segments,
     dayTimelines,
     gaps,

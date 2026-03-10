@@ -3,6 +3,7 @@ import { AvailabilityStatus } from "@prisma/client";
 import { ApiError } from "@/lib/api";
 import { getRestWarning, guardCount, hasOverlap, intervalContainedIn, validateVolunteerShift } from "@/lib/constraints";
 import { prisma } from "@/lib/prisma";
+import { getPlanningMonthWindow } from "@/lib/time";
 
 export type AssignmentValidationMonthContext = {
   id?: string;
@@ -34,12 +35,13 @@ export function validateVolunteerAssignmentAgainstContext(params: {
   ignoreRestWarning?: boolean;
   excludeAssignmentId?: string;
 }) {
+  const window = getPlanningMonthWindow(params.month);
   const message = validateVolunteerShift(params.startTime, params.endTime);
   if (message) {
     throw new ApiError(400, message);
   }
 
-  if (isBefore(params.startTime, params.month.startsAt) || isAfter(params.endTime, params.month.endsAt)) {
+  if (isBefore(params.startTime, window.coverageStart) || isAfter(params.endTime, window.coverageEnd)) {
     throw new ApiError(400, "La garde doit rester dans le mois sélectionné.");
   }
 

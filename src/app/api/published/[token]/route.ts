@@ -1,8 +1,8 @@
-import { eachDayOfInterval } from "date-fns";
 import { ApiError, ok, withApiError } from "@/lib/api";
 import { computeCoverageSegments, getGapSegments, splitCoverageByDay } from "@/lib/coverage";
 import { verifyPassword } from "@/lib/password";
 import { prisma } from "@/lib/prisma";
+import { getPlanningMonthWindow, listMonthDays } from "@/lib/time";
 
 export const runtime = "nodejs";
 
@@ -51,14 +51,12 @@ export const GET = (request: Request, context: { params: Promise<{ token: string
       }
     }
 
-    const boundaries = eachDayOfInterval({
-      start: month.startsAt,
-      end: month.endsAt,
-    });
+    const window = getPlanningMonthWindow(month);
+    const boundaries = listMonthDays(window.displayStart, window.displayEnd);
 
     const segments = computeCoverageSegments({
-      rangeStart: month.startsAt,
-      rangeEnd: month.endsAt,
+      rangeStart: window.coverageStart,
+      rangeEnd: window.coverageEnd,
       assignments: month.assignments.map((assignment) => ({
         id: assignment.id,
         volunteerId: assignment.volunteerId,
@@ -86,10 +84,16 @@ export const GET = (request: Request, context: { params: Promise<{ token: string
 
     return ok({
       requiresPassword: false,
-      month,
+      month: {
+        ...month,
+        startsAt: window.displayStart,
+        endsAt: window.displayEnd,
+        coverageStartsAt: window.coverageStart,
+        coverageEndsAt: window.coverageEnd,
+      },
       volunteers,
       coverageSegments: segments,
-      dayTimelines: splitCoverageByDay(month.startsAt, month.endsAt, segments),
+      dayTimelines: splitCoverageByDay(window.displayStart, window.displayEnd, segments),
       gaps: getGapSegments(segments),
     });
   });

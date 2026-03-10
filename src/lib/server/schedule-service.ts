@@ -5,7 +5,7 @@ import { ApiError } from "@/lib/api";
 import { computeCoverageSegments, getGapSegments, splitCoverageByDay } from "@/lib/coverage";
 import { generateDraftAssignments } from "@/lib/draft";
 import { prisma } from "@/lib/prisma";
-import { parseDateInput } from "@/lib/time";
+import { getPlanningMonthWindow, parseDateInput } from "@/lib/time";
 import {
   getVolunteerCandidateContexts,
   mergeGapSegments,
@@ -63,6 +63,8 @@ type ResolvedPlanningPeriod = {
     month: number;
     startsAt: Date;
     endsAt: Date;
+    coverageStartsAt: Date;
+    coverageEndsAt: Date;
     status: string;
   };
   rangeStart: Date;
@@ -130,19 +132,26 @@ export async function resolvePlanningPeriod(params: {
 }) {
   if (params.planningMonthId) {
     const month = await getPlanningMonthOrThrow(params.planningMonthId);
-    const rangeStart = params.startTime ?? month.startsAt;
-    const rangeEnd = params.endTime ?? month.endsAt;
+    const window = getPlanningMonthWindow(month);
+    const rangeStart = params.startTime ?? window.coverageStart;
+    const rangeEnd = params.endTime ?? window.coverageEnd;
 
     if (!isBefore(rangeStart, rangeEnd)) {
       throw new ApiError(400, "La fin doit être après le début.");
     }
 
-    if (isBefore(rangeStart, month.startsAt) || isBefore(month.endsAt, rangeEnd)) {
+    if (isBefore(rangeStart, window.coverageStart) || isBefore(window.coverageEnd, rangeEnd)) {
       throw new ApiError(400, "La période doit rester dans le mois sélectionné.");
     }
 
     return {
-      month,
+      month: {
+        ...month,
+        startsAt: window.displayStart,
+        endsAt: window.displayEnd,
+        coverageStartsAt: window.coverageStart,
+        coverageEndsAt: window.coverageEnd,
+      },
       rangeStart,
       rangeEnd,
     } satisfies ResolvedPlanningPeriod;
@@ -162,7 +171,7 @@ export async function resolvePlanningPeriod(params: {
         lte: params.startTime,
       },
       endsAt: {
-        gte: params.endTime,
+        gte: new Date(params.endTime.getTime() - 6 * 60 * 60 * 1000),
       },
     },
   });
@@ -171,8 +180,16 @@ export async function resolvePlanningPeriod(params: {
     throw new ApiError(400, "La période doit appartenir à un seul mois de planning existant.");
   }
 
+  const window = getPlanningMonthWindow(month);
+
   return {
-    month,
+    month: {
+      ...month,
+      startsAt: window.displayStart,
+      endsAt: window.displayEnd,
+      coverageStartsAt: window.coverageStart,
+      coverageEndsAt: window.coverageEnd,
+    },
     rangeStart: params.startTime,
     rangeEnd: params.endTime,
   } satisfies ResolvedPlanningPeriod;
@@ -649,13 +666,13 @@ export async function previewScheduleAdjustment(scheduleAdjustmentDraftId: strin
 
   const beforeWindow = computeScheduleWindow({
     month: monthSchedule,
-    rangeStart: monthSchedule.startsAt,
-    rangeEnd: monthSchedule.endsAt,
+    rangeStart: getPlanningMonthWindow(monthSchedule).coverageStart,
+    rangeEnd: getPlanningMonthWindow(monthSchedule).coverageEnd,
   });
   const afterWindow = computeScheduleWindow({
     month: monthSchedule,
-    rangeStart: monthSchedule.startsAt,
-    rangeEnd: monthSchedule.endsAt,
+    rangeStart: getPlanningMonthWindow(monthSchedule).coverageStart,
+    rangeEnd: getPlanningMonthWindow(monthSchedule).coverageEnd,
     assignments: workingAssignments,
   });
 

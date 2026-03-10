@@ -5,6 +5,7 @@ import { generateDraftAssignments } from "@/lib/draft";
 import { prisma } from "@/lib/prisma";
 import { logAssignmentEvent } from "@/lib/server/events";
 import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
+import { getPlanningMonthWindow } from "@/lib/time";
 
 export const runtime = "nodejs";
 
@@ -35,6 +36,7 @@ export const POST = (request: Request, context: { params: Promise<{ id: string }
     if (!month) {
       throw new ApiError(404, "Mois introuvable.");
     }
+    const window = getPlanningMonthWindow(month);
 
     const volunteers = await prisma.volunteer.findMany({
       include: {
@@ -61,8 +63,8 @@ export const POST = (request: Request, context: { params: Promise<{ id: string }
     );
 
     const draftAssignments = generateDraftAssignments({
-      monthStart: month.startsAt,
-      monthEnd: month.endsAt,
+      monthStart: window.coverageStart,
+      monthEnd: window.coverageEnd,
       volunteers: volunteers.map((volunteer) => ({
         id: volunteer.id,
         name: volunteer.name,

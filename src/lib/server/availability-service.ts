@@ -3,6 +3,7 @@ import { isBefore } from "date-fns";
 import { ApiError } from "@/lib/api";
 import { intervalContainedIn } from "@/lib/constraints";
 import { prisma } from "@/lib/prisma";
+import { getPlanningMonthWindow } from "@/lib/time";
 
 export type AvailabilityIntervalInput = {
   startTime: Date;
@@ -34,6 +35,8 @@ async function getVolunteerOrThrow(volunteerId: string) {
 }
 
 function validateAvailabilityInterval(month: { startsAt: Date; endsAt: Date }, interval: AvailabilityIntervalInput) {
+  const window = getPlanningMonthWindow(month);
+
   if (!isBefore(interval.startTime, interval.endTime)) {
     throw new ApiError(400, "La fin doit être après le début.");
   }
@@ -42,7 +45,7 @@ function validateAvailabilityInterval(month: { startsAt: Date; endsAt: Date }, i
     throw new ApiError(400, "La disponibilité doit être alignée sur l'heure.");
   }
 
-  if (isBefore(interval.startTime, month.startsAt) || isBefore(month.endsAt, interval.endTime)) {
+  if (isBefore(interval.startTime, window.coverageStart) || isBefore(window.coverageEnd, interval.endTime)) {
     throw new ApiError(400, "La disponibilité doit rester dans le mois.");
   }
 }

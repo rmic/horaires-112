@@ -26,6 +26,7 @@ export type CandidateSuggestion = {
   color: string;
   currentGuards: number;
   limit: number | null;
+  availabilityCount: number;
   startTime: Date;
   endTime: Date;
   durationMinutes: number;
@@ -250,6 +251,7 @@ export function suggestCandidatesForGap(
         color: volunteer.color,
         currentGuards: volunteer.assignments.length,
         limit: volunteer.maxGuardsPerMonth,
+        availabilityCount: volunteer.availabilities.length,
         startTime: bestWindow.startTime,
         endTime: bestWindow.endTime,
         durationMinutes: differenceInMinutes(bestWindow.endTime, bestWindow.startTime),

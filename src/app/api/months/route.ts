@@ -3,7 +3,7 @@ import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { generateFixedEmployeeBlocks } from "@/lib/server/employee-blocks";
 import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
-import { getMonthBounds } from "@/lib/time";
+import { getMonthBounds, getPlanningMonthWindow } from "@/lib/time";
 
 export const runtime = "nodejs";
 
@@ -53,6 +53,7 @@ export const POST = (request: Request) =>
     }
 
     const bounds = getMonthBounds(body.data.year, body.data.month);
+    const window = getPlanningMonthWindow(bounds);
 
     const month = await prisma.$transaction(async (tx) => {
       const created = await tx.planningMonth.create({
@@ -65,7 +66,7 @@ export const POST = (request: Request) =>
       });
 
       if (body.data.autoGenerateEmployeeBlocks) {
-        const blocks = generateFixedEmployeeBlocks(bounds.startsAt, bounds.endsAt);
+        const blocks = generateFixedEmployeeBlocks(window.coverageStart, window.coverageEnd);
         if (blocks.length > 0) {
           await tx.employeeBlock.createMany({
             data: blocks.map((block) => ({

@@ -28,6 +28,15 @@ export function getMonthBounds(year: number, month: number) {
   return { startsAt, endsAt };
 }
 
+export function getPlanningMonthWindow(bounds: { startsAt: Date; endsAt: Date }) {
+  return {
+    displayStart: new Date(bounds.startsAt),
+    coverageStart: addHours(bounds.startsAt, 6),
+    displayEnd: addHours(bounds.endsAt, 6),
+    coverageEnd: addHours(bounds.endsAt, 6),
+  };
+}
+
 export function getMonthLabel(year: number, month: number) {
   return capitalizeLabel(formatFrench(new Date(year, month - 1, 1), "MMMM yyyy"));
 }

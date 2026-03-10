@@ -86,6 +86,8 @@ type MonthModel = {
   month: number;
   startsAt: string;
   endsAt: string;
+  coverageStartsAt: string;
+  coverageEndsAt: string;
   status: "DRAFT" | "PUBLISHED";
   assignments: Assignment[];
   availabilities: Availability[];
@@ -119,6 +121,7 @@ type GapVolunteerSuggestion = {
   color: string;
   currentGuards: number;
   limit: number | null;
+  availabilityCount: number;
   startTime: string;
   endTime: string;
   durationMinutes: number;
@@ -1097,6 +1100,8 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                     <AvailabilityGrid
                       monthStart={monthData.month.startsAt}
                       monthEnd={monthData.month.endsAt}
+                      coverageStart={monthData.month.coverageStartsAt}
+                      coverageEnd={monthData.month.coverageEndsAt}
                       availabilities={availableAvailabilityRanges}
                       disabled={!availabilityVolunteerId || busy}
                       onCreateRange={async (startTime, endTime) => {
@@ -1472,8 +1477,7 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                                 />
                                 <span>{suggestion.name}</span>
                                 <span className="text-[11px] font-medium text-emerald-700">
-                                  {suggestion.currentGuards}
-                                  {suggestion.limit ? `/${suggestion.limit}` : ""}
+                                  {suggestion.currentGuards}/{suggestion.limit ?? suggestion.availabilityCount}
                                 </span>
                               </button>
                             ))}
@@ -1504,6 +1508,9 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                                   <span className="ml-1 text-[11px] font-medium text-amber-700">
                                     {formatAxisHour(new Date(suggestion.startTime), planningAxisStart)} - {formatAxisHour(new Date(suggestion.endTime), planningAxisStart)} ({formatDurationLabel(suggestion.durationMinutes)})
                                   </span>
+                                </span>
+                                <span className="text-[11px] font-medium text-amber-700">
+                                  {suggestion.currentGuards}/{suggestion.limit ?? suggestion.availabilityCount}
                                 </span>
                               </button>
                             ))}

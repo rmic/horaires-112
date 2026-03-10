@@ -27,6 +27,8 @@ type MergedAvailabilityItem = {
 type AvailabilityGridProps = {
   monthStart: string;
   monthEnd: string;
+  coverageStart: string;
+  coverageEnd: string;
   availabilities: AvailabilityItem[];
   disabled?: boolean;
   onCreateRange: (startTime: string, endTime: string) => Promise<void> | void;
@@ -75,6 +77,8 @@ function toIso(date: Date) {
 export function AvailabilityGrid({
   monthStart,
   monthEnd,
+  coverageStart,
+  coverageEnd,
   availabilities,
   disabled,
   onCreateRange,
@@ -82,6 +86,8 @@ export function AvailabilityGrid({
 }: AvailabilityGridProps) {
   const storageAxisStart = useMemo(() => new Date(monthStart), [monthStart]);
   const storageAxisEnd = useMemo(() => new Date(monthEnd), [monthEnd]);
+  const activeAxisStart = useMemo(() => new Date(coverageStart), [coverageStart]);
+  const activeAxisEnd = useMemo(() => new Date(coverageEnd), [coverageEnd]);
   const displayAxisStart = useMemo(() => {
     const date = new Date(monthStart);
     date.setHours(0, 0, 0, 0);
@@ -89,7 +95,20 @@ export function AvailabilityGrid({
   }, [monthStart]);
 
   const totalHours = Math.max(1, Math.round((storageAxisEnd.getTime() - storageAxisStart.getTime()) / 3_600_000));
-  const daysCount = Math.round(totalHours / 24);
+  const daysCount = Math.ceil(totalHours / 24);
+  const activeStartIndex = Math.max(
+    0,
+    Math.round((activeAxisStart.getTime() - storageAxisStart.getTime()) / 3_600_000),
+  );
+  const activeEndIndex = Math.min(
+    totalHours,
+    Math.round((activeAxisEnd.getTime() - storageAxisStart.getTime()) / 3_600_000),
+  );
+
+  const isIndexActive = useCallback(
+    (index: number) => index >= activeStartIndex && index < activeEndIndex,
+    [activeEndIndex, activeStartIndex],
+  );
 
   const [dragStart, setDragStart] = useState<number | null>(null);
   const [dragCurrent, setDragCurrent] = useState<number | null>(null);
@@ -233,7 +252,7 @@ export function AvailabilityGrid({
   const canCreatePresetAt = useCallback((index: number, durationHours: number) => {
     const end = index + durationHours;
 
-    if (end > totalHours) {
+    if (index < activeStartIndex || end > activeEndIndex) {
       return false;
     }
 
@@ -244,7 +263,7 @@ export function AvailabilityGrid({
     }
 
     return true;
-  }, [availabilityByHour, totalHours]);
+  }, [activeEndIndex, activeStartIndex, availabilityByHour]);
 
   const commitCreateRange = useCallback((startIndex: number, durationHours: number) => {
     const endIndex = startIndex + durationHours;
@@ -395,6 +414,7 @@ export function AvailabilityGrid({
 
                   {Array.from({ length: 24 }).map((__, hour) => {
                     const index = dayIndex * 24 + hour;
+                    const isActiveHour = isIndexActive(index);
                     const range = availabilityByHour.get(index);
                     const isSelected =
                       previewRange !== null && index >= previewRange.start && index < previewRange.end;
@@ -406,9 +426,10 @@ export function AvailabilityGrid({
                         key={hour}
                         className="group relative"
                         onDragOver={(event) => {
-                          if (disabled || range) return;
+                          if (disabled || range || !isActiveHour) return;
                           const durationHours = getDraggedDuration(event);
                           if (durationHours === null) return;
+                          if (!canCreatePresetAt(index, durationHours)) return;
                           event.preventDefault();
                           event.dataTransfer.dropEffect = "copy";
                           setDropPreview({
@@ -423,7 +444,7 @@ export function AvailabilityGrid({
                           setDropPreview(null);
                           const durationHours = getDraggedDuration(event);
                           setDraggedPresetHours(null);
-                          if (disabled || range || durationHours === null) return;
+                          if (disabled || range || durationHours === null || !isActiveHour) return;
                           event.preventDefault();
                           closeCellMenu();
                           commitCreateRange(index, durationHours);
@@ -432,9 +453,9 @@ export function AvailabilityGrid({
                         <button
                           type="button"
                           data-testid={`availability-cell-${dayIndex}-${hour}`}
-                          disabled={disabled}
+                          disabled={disabled || !isActiveHour}
                           onMouseDown={(event) => {
-                            if (event.button !== 0 || disabled || range) return;
+                            if (event.button !== 0 || disabled || range || !isActiveHour) return;
                             closeCellMenu();
                             setDragging(true);
                             setDragStart(index);
@@ -460,24 +481,33 @@ export function AvailabilityGrid({
                           }}
                           className={cn(
                             "flex h-6 w-full items-center justify-center rounded-sm border border-slate-200 text-[9px] transition",
+                            !isActiveHour && "cursor-not-allowed bg-slate-100 text-slate-300",
                             range
                               ? range.pendingAction === "create"
                                 ? "bg-emerald-700 text-white"
                                 : range.pendingAction === "delete"
                                   ? "border-slate-300 bg-slate-200 text-slate-500"
-                                : "bg-emerald-500 text-white"
-                              : "bg-slate-50 hover:bg-slate-100",
+                                  : "bg-emerald-500 text-white"
+                              : isActiveHour
+                                ? "bg-slate-50 hover:bg-slate-100"
+                                : "bg-slate-100",
                             isSelected && "bg-sky-500 text-white",
                             isDropPreview && "bg-sky-100 ring-1 ring-sky-400",
                           )}
-                          title={range ? "Double-cliquez pour supprimer cette plage" : "Cliquez-glissez pour ajouter"}
+                          title={
+                            !isActiveHour
+                              ? ""
+                              : range
+                                ? "Double-cliquez pour supprimer cette plage"
+                                : "Cliquez-glissez pour ajouter"
+                          }
                         >
                           {range ? (range.pendingAction ? "" : "OK") : ""}
                         </button>
 
                         <button
                           type="button"
-                          disabled={disabled}
+                          disabled={disabled || !isActiveHour}
                           onClick={(event) => {
                             event.preventDefault();
                             event.stopPropagation();
@@ -495,7 +525,9 @@ export function AvailabilityGrid({
                             "absolute top-0.5 right-0.5 flex h-4 w-4 items-center justify-center rounded text-slate-500 transition",
                             range
                               ? "opacity-80 hover:bg-white/20 hover:text-white"
-                              : "opacity-0 group-hover:opacity-70 hover:bg-slate-200 hover:text-slate-700",
+                              : isActiveHour
+                                ? "opacity-0 group-hover:opacity-70 hover:bg-slate-200 hover:text-slate-700"
+                                : "opacity-0",
                           )}
                           title="Actions"
                         >

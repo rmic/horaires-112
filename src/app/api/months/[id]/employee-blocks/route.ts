@@ -5,7 +5,7 @@ import { validateEmployeeBlock } from "@/lib/constraints";
 import { prisma } from "@/lib/prisma";
 import { generateFixedEmployeeBlocks } from "@/lib/server/employee-blocks";
 import { requirePlannerAccess } from "@/lib/server/web-manager-auth";
-import { parseDateInput } from "@/lib/time";
+import { getPlanningMonthWindow, parseDateInput } from "@/lib/time";
 
 export const runtime = "nodejs";
 
@@ -47,6 +47,7 @@ export const POST = (request: Request, context: { params: Promise<{ id: string }
     if (!month) {
       throw new ApiError(404, "Mois introuvable.");
     }
+    const window = getPlanningMonthWindow(month);
 
     const body = schema.safeParse(await readJson<unknown>(request));
     if (!body.success) {
@@ -55,7 +56,7 @@ export const POST = (request: Request, context: { params: Promise<{ id: string }
 
     if (body.data.mode === "bulk") {
       const { replaceExisting } = body.data;
-      const blocks = generateFixedEmployeeBlocks(month.startsAt, month.endsAt);
+      const blocks = generateFixedEmployeeBlocks(window.coverageStart, window.coverageEnd);
 
       await prisma.$transaction(async (tx) => {
         if (replaceExisting) {
@@ -89,7 +90,7 @@ export const POST = (request: Request, context: { params: Promise<{ id: string }
       throw new ApiError(400, message);
     }
 
-    const intersectsMonth = isBefore(startTime, month.endsAt) && isAfter(endTime, month.startsAt);
+    const intersectsMonth = isBefore(startTime, window.coverageEnd) && isAfter(endTime, window.coverageStart);
     if (!intersectsMonth) {
       throw new ApiError(400, "Le bloc salarié doit couvrir au moins une partie du mois.");
     }
