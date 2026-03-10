@@ -62,6 +62,7 @@ export const GET = (request: Request, context: { params: Promise<{ token: string
         volunteerId: assignment.volunteerId,
         volunteerName: assignment.volunteer.name,
         volunteerColor: assignment.volunteer.color,
+        lane: assignment.lane,
         status: assignment.status,
         startTime: assignment.startTime,
         endTime: assignment.endTime,

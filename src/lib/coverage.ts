@@ -6,6 +6,7 @@ type VolunteerAssignment = {
   volunteerId: string;
   volunteerName: string;
   volunteerColor: string;
+  lane?: "A1" | "A2" | "A3" | null;
   status: "CONFIRMED" | "PROVISIONAL";
   startTime: Date;
   endTime: Date;
@@ -106,7 +107,7 @@ export function computeCoverageSegments(input: ComputeCoverageInput): CoverageSe
     );
     const employeeBlocks = input.employeeBlocks.filter((block) => overlaps(block, startTime, endTime));
 
-    const volunteerCount = volunteerAssignments.length;
+    const volunteerCount = volunteerAssignments.filter((assignment) => assignment.lane !== "A3").length;
     const employeeCount = employeeBlocks.length;
     const totalCoverage = volunteerCount + employeeCount;
 

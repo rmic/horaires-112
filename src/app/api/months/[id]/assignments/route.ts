@@ -1,4 +1,4 @@
-import { AssignmentSource, AssignmentStatus } from "@prisma/client";
+import { AssignmentLane, AssignmentSource, AssignmentStatus } from "@prisma/client";
 import { z } from "zod";
 import { ApiError, ok, readJson, withApiError } from "@/lib/api";
 import { createAssignments, listAssignments } from "@/lib/server/assignment-service";
@@ -13,6 +13,7 @@ const createAssignmentSchema = z
     volunteerIds: z.array(z.string().min(1)).min(1).max(2).optional(),
     startTime: z.string(),
     endTime: z.string(),
+    lane: z.nativeEnum(AssignmentLane).optional().nullable(),
     status: z.nativeEnum(AssignmentStatus).default(AssignmentStatus.CONFIRMED),
     source: z.nativeEnum(AssignmentSource).default(AssignmentSource.MANUAL),
     ignoreRestWarning: z.boolean().optional().default(false),
@@ -40,11 +41,15 @@ export const POST = (request: Request, context: { params: Promise<{ id: string }
     }
 
     const volunteerIds = body.data.volunteerIds ?? (body.data.volunteerId ? [body.data.volunteerId] : []);
+    if (body.data.lane && volunteerIds.length !== 1) {
+      throw new ApiError(400, "Une affectation sur une lane doit concerner un seul volontaire.");
+    }
     const assignments = await createAssignments({
       planningMonthId,
       volunteerIds,
       startTime: parseDateInput(body.data.startTime),
       endTime: parseDateInput(body.data.endTime),
+      lane: body.data.lane ?? null,
       status: body.data.status,
       source: body.data.source,
       ignoreRestWarning: body.data.ignoreRestWarning,

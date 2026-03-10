@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { differenceInMinutes, format } from "date-fns";
 import { formatAxisHour, formatHour, formatShortDate, remapFromDisplayAxis, remapToDisplayAxis } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -9,9 +10,11 @@ type Segment = {
   endTime: string;
   missingCount: number;
   volunteerAssignments: Array<{
+    assignmentId?: string;
     volunteerId: string;
     volunteerName: string;
     volunteerColor: string;
+    lane?: "A1" | "A2" | "A3" | null;
     status: "CONFIRMED" | "PROVISIONAL";
   }>;
   employeeBlocks: Array<{
@@ -59,7 +62,25 @@ type MonthTimelineProps = {
   volunteerFilterId?: string;
   gapSuggestions?: GapSuggestion[];
   filterMode?: "contextual" | "volunteer-only";
+  busy?: boolean;
   onSegmentClick?: (segment: Segment) => void;
+  onConfirmSuggestion?: (params: {
+    laneIndex: number;
+    laneLabel: "A1" | "A2";
+    volunteerId: string;
+    volunteerName: string;
+    startTime: string;
+    endTime: string;
+  }) => Promise<void> | void;
+  onRemoveAssignment?: (params: {
+    laneIndex: number;
+    laneLabel: "A1" | "A2";
+    assignmentId: string;
+    volunteerId: string;
+    volunteerName: string;
+    startTime: string;
+    endTime: string;
+  }) => Promise<void> | void;
 };
 
 type LaneVariant =
@@ -87,6 +108,7 @@ type CoverageItem = {
   label: string;
   variant: LaneVariant;
   editorSegment: Segment;
+  preferredLane: 0 | 1 | null;
 };
 
 function formatDurationLabel(startTime: string, endTime: string) {
@@ -127,11 +149,15 @@ function shouldHideForFilter(
 
 function getVolunteerCoverageItems(segment: Segment) {
   return [...segment.volunteerAssignments]
+    .filter((assignment) => assignment.lane !== "A3")
     .sort((a, b) => a.volunteerName.localeCompare(b.volunteerName))
     .map<CoverageItem>((assignment) => ({
-      key: `volunteer:${assignment.volunteerId}:${assignment.status}`,
+      key: assignment.assignmentId
+        ? `assignment:${assignment.assignmentId}`
+        : `volunteer:${assignment.volunteerId}:${assignment.status}`,
       label: assignment.volunteerName,
       variant: assignment.status === "PROVISIONAL" ? "provisional" : "volunteer",
+      preferredLane: assignment.lane === "A1" ? 0 : assignment.lane === "A2" ? 1 : null,
       editorSegment: {
         ...segment,
         volunteerAssignments: [assignment],
@@ -145,6 +171,7 @@ function getEmployeeCoverageItems(segment: Segment) {
     key: `employee:${block.id}`,
     label: block.label,
     variant: "employee",
+    preferredLane: null,
     editorSegment: {
       ...segment,
       employeeBlocks: [],
@@ -316,13 +343,30 @@ function buildLaneBlocks(
   const previousLaneKeys: Array<string | null> = [null, null];
 
   for (const segment of visibleSegments) {
+    const explicitLaneItems: Array<CoverageItem | null> = [null, null];
     const availableItems = [
       ...getVolunteerCoverageItems(segment),
       ...getEmployeeCoverageItems(segment),
-    ];
+    ].filter((item) => {
+      if (item.preferredLane === null) {
+        return true;
+      }
+
+      if (!explicitLaneItems[item.preferredLane]) {
+        explicitLaneItems[item.preferredLane] = item;
+        return false;
+      }
+
+      return true;
+    });
     const laneItems: Array<CoverageItem | null> = [null, null];
 
     for (let laneIndex = 0; laneIndex < 2; laneIndex += 1) {
+      if (explicitLaneItems[laneIndex]) {
+        laneItems[laneIndex] = explicitLaneItems[laneIndex];
+        continue;
+      }
+
       const previousLaneKey = previousLaneKeys[laneIndex];
       if (!previousLaneKey) {
         continue;
@@ -450,8 +494,32 @@ export function MonthTimeline({
   volunteerFilterId,
   gapSuggestions = [],
   filterMode = "contextual",
+  busy = false,
   onSegmentClick,
+  onConfirmSuggestion,
+  onRemoveAssignment,
 }: MonthTimelineProps) {
+  const [openAssignmentMenuKey, setOpenAssignmentMenuKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handlePointerDown = () => {
+      setOpenAssignmentMenuKey(null);
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenAssignmentMenuKey(null);
+      }
+    };
+
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, []);
+
   const preparedDays = (() => {
     const days = dayTimelines.map((day) => {
       const splitSegments = splitSegmentsOnShiftBoundariesWithAxis(day.dayStart, day.segments, axisStart);
@@ -563,6 +631,7 @@ export function MonthTimeline({
                     className="relative z-0 h-5 rounded-md border border-slate-200 bg-slate-50 hover:z-20"
                   >
                     {blocks.map((block, index) => {
+                      const laneLabel = laneIndex === 0 ? "A1" : "A2";
                       const startTime = new Date(block.startTime);
                       const endTime = new Date(block.endTime);
                       const logicalStartTime = new Date(block.logicalStartTime ?? block.startTime);
@@ -607,33 +676,63 @@ export function MonthTimeline({
                           : block.continuedFromPreviousDay && block.variant === "gap"
                             ? ""
                             : displayLabel;
+                      const assignment = block.editorSegment.volunteerAssignments[0];
+                      const assignmentId = assignment?.assignmentId;
+                      const canOpenAssignmentMenu =
+                        (block.variant === "volunteer" || block.variant === "provisional") &&
+                        Boolean(assignmentId) &&
+                        block.editorSegment.volunteerAssignments.length === 1;
+                      const assignmentMenuKey = canOpenAssignmentMenu
+                        ? `${laneIndex}:${assignmentId}:${block.startTime}:${block.endTime}`
+                        : null;
+                      const assignmentMenuOpen = assignmentMenuKey !== null && openAssignmentMenuKey === assignmentMenuKey;
+                      const handlePrimaryClick = () => {
+                        if (assignmentMenuKey) {
+                          setOpenAssignmentMenuKey((current) =>
+                            current === assignmentMenuKey ? null : assignmentMenuKey,
+                          );
+                          return;
+                        }
+
+                        onSegmentClick?.(block.editorSegment);
+                      };
 
                       return (
-                        <button
-                          type="button"
+                        <div
                           key={`${block.key}-${block.startTime}-${block.endTime}-${index}`}
-                          data-testid="timeline-block"
-                          data-day={dayKey}
-                          data-lane={laneIndex}
-                          data-start-time={block.startTime}
-                          data-end-time={block.endTime}
-                          data-label={displayLabel}
-                          data-variant={effectiveVariant}
-                          aria-label={title}
-                          className={cn(
-                            "group absolute top-0 bottom-0 overflow-visible rounded-[4px] border px-1 text-left text-[9px] font-bold leading-4 whitespace-nowrap",
-                            onSegmentClick ? "cursor-pointer transition hover:brightness-110" : "",
-                            laneClasses(effectiveVariant),
-                          )}
-                          onClick={() => onSegmentClick?.(block.editorSegment)}
+                          className="group absolute top-0 bottom-0 overflow-visible"
                           style={{
                             left: `${left}%`,
                             width: `${width}%`,
                           }}
                         >
-                          <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{textLabel}</span>
+                          <button
+                            type="button"
+                            data-testid="timeline-block"
+                            data-day={dayKey}
+                            data-lane={laneIndex}
+                            data-start-time={block.startTime}
+                            data-end-time={block.endTime}
+                            data-label={displayLabel}
+                            data-variant={effectiveVariant}
+                            aria-label={title}
+                            className={cn(
+                              "absolute inset-0 overflow-visible rounded-[4px] border px-1 text-left text-[9px] font-bold leading-4 whitespace-nowrap",
+                              onSegmentClick || assignmentMenuKey ? "cursor-pointer transition hover:brightness-110" : "",
+                              laneClasses(effectiveVariant),
+                            )}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handlePrimaryClick();
+                            }}
+                          >
+                            <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{textLabel}</span>
+                          </button>
                           {gapHint ? (
-                            <span className="pointer-events-none invisible absolute left-1/2 top-full z-30 mt-1 w-max min-w-56 max-w-80 -translate-x-1/2 rounded-md bg-slate-900 px-3 py-2 text-left text-[11px] font-medium leading-4 text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100">
+                            <span
+                              className="invisible absolute left-1/2 top-full z-30 mt-1 w-max min-w-56 max-w-80 -translate-x-1/2 rounded-md bg-slate-900 px-3 py-2 text-left text-[11px] font-medium leading-4 text-white opacity-0 shadow-lg transition-opacity group-hover:visible group-hover:opacity-100"
+                              onPointerDown={(event) => event.stopPropagation()}
+                            >
                               {gapHint.fullSuggestions.length > 0 ? (
                                 <span className="block">
                                   <span className="block font-semibold">Couverture complète possible</span>
@@ -649,8 +748,35 @@ export function MonthTimeline({
                                         : formatHour(suggestionEnd);
 
                                       return (
-                                        <span key={`full-${suggestion.id}`} className="block">
-                                          {suggestion.name} {suggestionStartLabel}-{suggestionEndLabel}
+                                        <span
+                                          key={`full-${suggestion.id}`}
+                                          className="flex items-center justify-between gap-3"
+                                        >
+                                          <span className="block">
+                                            {suggestion.name} {suggestionStartLabel}-{suggestionEndLabel}
+                                          </span>
+                                          {onConfirmSuggestion ? (
+                                            <button
+                                              type="button"
+                                              data-testid={`timeline-confirm-${laneLabel}-${suggestion.id}`}
+                                              disabled={busy}
+                                              className="rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                              onClick={(event) => {
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                void onConfirmSuggestion({
+                                                  laneIndex,
+                                                  laneLabel,
+                                                  volunteerId: suggestion.id,
+                                                  volunteerName: suggestion.name,
+                                                  startTime: suggestion.startTime,
+                                                  endTime: suggestion.endTime,
+                                                });
+                                              }}
+                                            >
+                                              Valider {laneLabel}
+                                            </button>
+                                          ) : null}
                                         </span>
                                       );
                                     })}
@@ -672,8 +798,35 @@ export function MonthTimeline({
                                         : formatHour(suggestionEnd);
 
                                       return (
-                                        <span key={`partial-${suggestion.id}`} className="block">
-                                          {suggestion.name} {suggestionStartLabel}-{suggestionEndLabel}
+                                        <span
+                                          key={`partial-${suggestion.id}`}
+                                          className="flex items-center justify-between gap-3"
+                                        >
+                                          <span className="block">
+                                            {suggestion.name} {suggestionStartLabel}-{suggestionEndLabel}
+                                          </span>
+                                          {onConfirmSuggestion ? (
+                                            <button
+                                              type="button"
+                                              data-testid={`timeline-confirm-${laneLabel}-${suggestion.id}`}
+                                              disabled={busy}
+                                              className="rounded bg-emerald-500 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-60"
+                                              onClick={(event) => {
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                void onConfirmSuggestion({
+                                                  laneIndex,
+                                                  laneLabel,
+                                                  volunteerId: suggestion.id,
+                                                  volunteerName: suggestion.name,
+                                                  startTime: suggestion.startTime,
+                                                  endTime: suggestion.endTime,
+                                                });
+                                              }}
+                                            >
+                                              Valider {laneLabel}
+                                            </button>
+                                          ) : null}
                                         </span>
                                       );
                                     })}
@@ -687,7 +840,49 @@ export function MonthTimeline({
                               ) : null}
                             </span>
                           ) : null}
-                        </button>
+                          {assignmentMenuOpen && assignment && assignmentId ? (
+                            <div
+                              className="absolute left-1/2 top-full z-30 mt-1 min-w-44 -translate-x-1/2 rounded-md border border-slate-200 bg-white p-1 text-left shadow-lg"
+                              onClick={(event) => event.stopPropagation()}
+                              onPointerDown={(event) => event.stopPropagation()}
+                            >
+                              {onSegmentClick ? (
+                                <button
+                                  type="button"
+                                  className="block w-full rounded px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-100"
+                                  onClick={() => {
+                                    setOpenAssignmentMenuKey(null);
+                                    onSegmentClick(block.editorSegment);
+                                  }}
+                                >
+                                  Charger dans l&apos;éditeur
+                                </button>
+                              ) : null}
+                              {onRemoveAssignment ? (
+                                <button
+                                  type="button"
+                                  data-testid={`timeline-unassign-${laneLabel}-${assignmentId}`}
+                                  disabled={busy}
+                                  className="block w-full rounded px-3 py-2 text-left text-sm text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  onClick={() => {
+                                    setOpenAssignmentMenuKey(null);
+                                    void onRemoveAssignment({
+                                      laneIndex,
+                                      laneLabel,
+                                      assignmentId,
+                                      volunteerId: assignment.volunteerId,
+                                      volunteerName: assignment.volunteerName,
+                                      startTime: block.startTime,
+                                      endTime: block.endTime,
+                                    });
+                                  }}
+                                >
+                                  Désinscrire {laneLabel}
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
                       );
                     })}
                   </div>

@@ -20,7 +20,13 @@ export async function readJson<T>(request: Request): Promise<T> {
 }
 
 export function ok<T>(data: T, init?: ResponseInit) {
-  return NextResponse.json(data, init);
+  return NextResponse.json(data, {
+    ...init,
+    headers: {
+      "Cache-Control": "no-store",
+      ...(init?.headers ?? {}),
+    },
+  });
 }
 
 export function withApiError(handler: () => Promise<Response>) {

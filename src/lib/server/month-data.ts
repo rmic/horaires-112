@@ -63,6 +63,7 @@ export async function getMonthSnapshot(monthId: string) {
       volunteerId: assignment.volunteerId,
       volunteerName: assignment.volunteer.name,
       volunteerColor: assignment.volunteer.color,
+      lane: assignment.lane,
       status: assignment.status,
       startTime: assignment.startTime,
       endTime: assignment.endTime,

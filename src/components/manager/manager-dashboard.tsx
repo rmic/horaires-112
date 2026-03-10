@@ -6,6 +6,7 @@ import { signOut } from "next-auth/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AvailabilityGrid } from "@/components/manager/availability-grid";
 import { MonthTimeline } from "@/components/manager/month-timeline";
+import { PlanningBoard } from "@/components/manager/planning-board";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Table, TableCell, TableHead } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import type { PlanningLane, PlanningPlacementResolution } from "@/lib/planning-lanes";
 import { formatAxisDateTime, formatAxisHour, formatDateTime, toDateTimeInputValue } from "@/lib/time";
 
 type Volunteer = {
@@ -28,6 +30,7 @@ type Assignment = {
   volunteerId: string;
   startTime: string;
   endTime: string;
+  lane?: PlanningLane | null;
   status: "CONFIRMED" | "PROVISIONAL";
   source: "MANUAL" | "DRAFT";
   volunteer: Volunteer;
@@ -68,9 +71,11 @@ type DayTimeline = {
     endTime: string;
     missingCount: number;
     volunteerAssignments: Array<{
+      assignmentId?: string;
       volunteerId: string;
       volunteerName: string;
       volunteerColor: string;
+      lane?: PlanningLane | null;
       status: "CONFIRMED" | "PROVISIONAL";
     }>;
     employeeBlocks: Array<{
@@ -166,9 +171,16 @@ function formatDurationLabel(durationMinutes: number) {
   return `${hours}h${String(minutes).padStart(2, "0")}`;
 }
 
+function showVisibleError(message: string) {
+  if (typeof window !== "undefined") {
+    window.alert(message);
+  }
+}
+
 async function api<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
+    cache: init?.cache ?? "no-store",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers ?? {}),
@@ -313,7 +325,7 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
 
   const [availabilityVolunteerId, setAvailabilityVolunteerId] = useState("");
   const [timelineVolunteerFilter, setTimelineVolunteerFilter] = useState("");
-  const [managerTab, setManagerTab] = useState<"planning" | "volunteers">("planning");
+  const [managerTab, setManagerTab] = useState<"availability" | "planning" | "volunteers">("availability");
 
   const [newVolunteerName, setNewVolunteerName] = useState("");
   const [newVolunteerColor, setNewVolunteerColor] = useState("#0ea5e9");
@@ -337,6 +349,7 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
   const [newNote, setNewNote] = useState("");
 
   const [busy, setBusy] = useState(false);
+  const [planningBusy, setPlanningBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
   const [error, setError] = useState("");
 
@@ -489,6 +502,7 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
       volunteerIds: string[];
       startTime: string;
       endTime: string;
+      lane?: PlanningLane | null;
       status: "CONFIRMED" | "PROVISIONAL";
     }) => {
       try {
@@ -498,6 +512,7 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
             volunteerIds: params.volunteerIds,
             startTime: params.startTime,
             endTime: params.endTime,
+            lane: params.lane ?? null,
             status: params.status,
             source: "MANUAL",
           }),
@@ -516,6 +531,7 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                 volunteerIds: params.volunteerIds,
                 startTime: params.startTime,
                 endTime: params.endTime,
+                lane: params.lane ?? null,
                 status: params.status,
                 source: "MANUAL",
                 ignoreRestWarning: true,
@@ -668,6 +684,206 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
     [createAssignments, loadSelectedMonth, monthData],
   );
 
+  const confirmTimelineSuggestion = useCallback(
+    async (params: {
+      laneIndex: number;
+      laneLabel: "A1" | "A2";
+      volunteerId: string;
+      volunteerName: string;
+      startTime: string;
+      endTime: string;
+    }) => {
+      setBusy(true);
+
+      try {
+        await createAssignments({
+          volunteerIds: [params.volunteerId],
+          startTime: params.startTime,
+          endTime: params.endTime,
+          lane: params.laneLabel,
+          status: "CONFIRMED",
+        });
+        await loadSelectedMonth();
+        const planningAxisStart = monthData ? new Date(monthData.month.startsAt) : new Date(params.startTime);
+        setFeedback(
+          `${params.volunteerName} confirmé sur ${params.laneLabel} du ${formatAxisDateTime(new Date(params.startTime), planningAxisStart)} au ${formatAxisDateTime(new Date(params.endTime), planningAxisStart)}.`,
+        );
+        setError("");
+      } catch (value) {
+        setError(getError(value).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [createAssignments, loadSelectedMonth, monthData],
+  );
+
+  const removeTimelineAssignment = useCallback(
+    async (params: {
+      laneIndex: number;
+      laneLabel: "A1" | "A2";
+      assignmentId: string;
+      volunteerId: string;
+      volunteerName: string;
+      startTime: string;
+      endTime: string;
+    }) => {
+      setBusy(true);
+
+      try {
+        await api(`/api/assignments/${params.assignmentId}`, {
+          method: "DELETE",
+        });
+        await loadSelectedMonth();
+        const planningAxisStart = monthData ? new Date(monthData.month.startsAt) : new Date(params.startTime);
+        setFeedback(
+          `${params.volunteerName} désinscrit de ${params.laneLabel} du ${formatAxisDateTime(new Date(params.startTime), planningAxisStart)} au ${formatAxisDateTime(new Date(params.endTime), planningAxisStart)}.`,
+        );
+        setError("");
+      } catch (value) {
+        setError(getError(value).message);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadSelectedMonth, monthData],
+  );
+
+  const placePlanningAssignment = useCallback(
+    async (params: {
+      volunteerId: string;
+      volunteerName: string;
+      volunteerColor: string;
+      lane: PlanningLane;
+      startTime: string;
+      endTime: string;
+      ignoreRestWarning?: boolean;
+      resolutions?: PlanningPlacementResolution[];
+    }) => {
+      if (!monthData) {
+        throw new Error("Aucun mois sélectionné.");
+      }
+
+      setPlanningBusy(true);
+
+      try {
+        await api(`/api/months/${monthData.month.id}/planning-placements`, {
+          method: "POST",
+          body: JSON.stringify({
+            volunteerId: params.volunteerId,
+            lane: params.lane,
+            startTime: params.startTime,
+            endTime: params.endTime,
+            ignoreRestWarning: params.ignoreRestWarning ?? false,
+            resolutions: params.resolutions,
+          }),
+        });
+
+        let refreshError = "";
+        try {
+          await loadSelectedMonth();
+        } catch (value) {
+          refreshError = `Affectation enregistrée, mais rafraîchissement impossible: ${getError(value).message}`;
+        }
+
+        const planningAxisStart = new Date(monthData.month.startsAt);
+        setFeedback(
+          `${params.volunteerName} affecté sur ${params.lane} du ${formatAxisDateTime(new Date(params.startTime), planningAxisStart)} au ${formatAxisDateTime(new Date(params.endTime), planningAxisStart)}.`,
+        );
+        setError(refreshError);
+        if (refreshError) {
+          showVisibleError(refreshError);
+        }
+      } catch (value) {
+        const err = getError(value);
+        if (err.status === 409 && (err.details as { type?: string } | undefined)?.type === "REST_WARNING") {
+          const proceed = window.confirm(`${err.message}\n\nForcer malgré cet avertissement ?`);
+
+          if (proceed) {
+            await api(`/api/months/${monthData.month.id}/planning-placements`, {
+              method: "POST",
+              body: JSON.stringify({
+                volunteerId: params.volunteerId,
+                lane: params.lane,
+                startTime: params.startTime,
+                endTime: params.endTime,
+                ignoreRestWarning: true,
+                resolutions: params.resolutions,
+              }),
+            });
+
+            let refreshError = "";
+            try {
+              await loadSelectedMonth();
+            } catch (refreshValue) {
+              refreshError = `Affectation enregistrée, mais rafraîchissement impossible: ${getError(refreshValue).message}`;
+            }
+
+            const planningAxisStart = new Date(monthData.month.startsAt);
+            setFeedback(
+              `${params.volunteerName} affecté sur ${params.lane} du ${formatAxisDateTime(new Date(params.startTime), planningAxisStart)} au ${formatAxisDateTime(new Date(params.endTime), planningAxisStart)}.`,
+            );
+            setError(refreshError);
+            if (refreshError) {
+              showVisibleError(refreshError);
+            }
+            return;
+          }
+        }
+
+        const message = err.message;
+        setError(message);
+        showVisibleError(message);
+        throw err;
+      } finally {
+        setPlanningBusy(false);
+      }
+    },
+    [loadSelectedMonth, monthData],
+  );
+
+  const removePlanningAssignment = useCallback(
+    async (params: {
+      assignmentId: string;
+      volunteerName: string;
+      lane: PlanningLane;
+      startTime: string;
+      endTime: string;
+    }) => {
+      setPlanningBusy(true);
+
+      try {
+        await api(`/api/assignments/${params.assignmentId}`, {
+          method: "DELETE",
+        });
+
+        let refreshError = "";
+        try {
+          await loadSelectedMonth();
+        } catch (value) {
+          refreshError = `Suppression enregistrée, mais rafraîchissement impossible: ${getError(value).message}`;
+        }
+
+        const planningAxisStart = monthData ? new Date(monthData.month.startsAt) : new Date(params.startTime);
+        setFeedback(
+          `${params.volunteerName} désinscrit de ${params.lane} du ${formatAxisDateTime(new Date(params.startTime), planningAxisStart)} au ${formatAxisDateTime(new Date(params.endTime), planningAxisStart)}.`,
+        );
+        setError(refreshError);
+        if (refreshError) {
+          showVisibleError(refreshError);
+        }
+      } catch (value) {
+        const message = getError(value).message;
+        setError(message);
+        showVisibleError(message);
+        throw value;
+      } finally {
+        setPlanningBusy(false);
+      }
+    },
+    [loadSelectedMonth, monthData],
+  );
+
   return (
     <div className="mx-auto flex w-full max-w-[1500px] flex-col gap-5 px-4 py-6 md:px-6">
       <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -711,6 +927,13 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
         {error && <p className="mt-2 text-sm font-semibold text-red-700">{error}</p>}
         <div className="mt-4 flex flex-wrap gap-2">
           <Button
+            variant={managerTab === "availability" ? "default" : "secondary"}
+            onClick={() => setManagerTab("availability")}
+          >
+            <CalendarDays className="h-4 w-4" />
+            Disponibilités
+          </Button>
+          <Button
             variant={managerTab === "planning" ? "default" : "secondary"}
             onClick={() => setManagerTab("planning")}
           >
@@ -726,6 +949,22 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
           </Button>
         </div>
       </div>
+
+      {error ? (
+        <div className="fixed inset-x-0 top-5 z-50 flex justify-center px-4">
+          <div className="w-full max-w-2xl rounded-xl border border-red-300 bg-red-50 px-4 py-3 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-black uppercase tracking-wide text-red-800">Erreur</p>
+                <p className="mt-1 text-sm font-semibold text-red-700">{error}</p>
+              </div>
+              <Button variant="ghost" className="h-auto px-2 py-1 text-red-700" onClick={() => setError("")}>
+                Fermer
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {managerTab === "volunteers" ? (
         <Card>
@@ -815,6 +1054,215 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
             </div>
           </CardContent>
         </Card>
+      ) : managerTab === "planning" ? (
+        <div className="grid gap-5 xl:grid-cols-[360px_minmax(0,1fr)]">
+          <Card className="h-fit xl:sticky xl:top-6">
+            <CardHeader>
+              <CardTitle>Pilotage du mois</CardTitle>
+              <CardDescription>
+                Sélection du mois actif, création et publication. Le board travaille sur la fenêtre métier du mois sélectionné.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="space-y-3">
+                <Label>Créer un mois</Label>
+                <div className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                  <Input
+                    data-testid="planning-create-month-year"
+                    type="number"
+                    value={createYear}
+                    onChange={(event) => setCreateYear(Number(event.target.value))}
+                  />
+                  <Select
+                    data-testid="planning-create-month-month"
+                    value={String(createMonth)}
+                    onChange={(event) => setCreateMonth(Number(event.target.value))}
+                  >
+                    {Array.from({ length: 12 }).map((_, index) => (
+                      <option key={index + 1} value={index + 1}>
+                        {String(index + 1).padStart(2, "0")}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    data-testid="planning-create-month"
+                    onClick={async () => {
+                      setBusy(true);
+                      try {
+                        await api("/api/months", {
+                          method: "POST",
+                          body: JSON.stringify({
+                            year: createYear,
+                            month: createMonth,
+                            autoGenerateEmployeeBlocks: false,
+                          }),
+                        });
+                        await refreshAll();
+                        setFeedback("Mois créé.");
+                      } catch (value) {
+                        setError(getError(value).message);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Créer
+                  </Button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <Label>Mois disponibles</Label>
+                <div className="max-h-56 overflow-auto rounded-md border border-slate-200">
+                  {months.map((month) => (
+                    <button
+                      key={month.id}
+                      type="button"
+                      data-testid={`planning-month-row-${month.year}-${String(month.month).padStart(2, "0")}`}
+                      onClick={() => setSelectedMonthId(month.id)}
+                      className={`flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left hover:bg-slate-50 ${
+                        selectedMonthId === month.id ? "bg-slate-100" : ""
+                      }`}
+                    >
+                      <span className="font-semibold text-slate-800">
+                        {String(month.month).padStart(2, "0")}/{month.year}
+                      </span>
+                      <span className="flex items-center gap-2">
+                        <Badge variant={month.status === "PUBLISHED" ? "success" : "warning"}>
+                          {month.status === "PUBLISHED" ? "Publié" : "Brouillon"}
+                        </Badge>
+                        <span className="text-xs text-slate-500">{month._count.assignments} gardes</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                {monthData ? (
+                  <>
+                    <p className="text-sm font-semibold text-slate-800">
+                      Actif: {String(monthData.month.month).padStart(2, "0")}/{monthData.month.year}
+                    </p>
+                    <div className="space-y-2">
+                      <Label>Mot de passe partagé (optionnel)</Label>
+                      <Input
+                        data-testid="planning-publish-password"
+                        placeholder="Vide = lien secret seul"
+                        value={publishPassword}
+                        onChange={(event) => setPublishPassword(event.target.value)}
+                      />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <Button
+                        data-testid="planning-publish-month"
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            await api(`/api/months/${monthData.month.id}/publish`, {
+                              method: "POST",
+                              body: JSON.stringify({ publish: true, password: publishPassword || null }),
+                            });
+                            await refreshAll();
+                            setFeedback("Planning publié.");
+                          } catch (value) {
+                            setError(getError(value).message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        Publier
+                      </Button>
+                      <Button
+                        data-testid="planning-preview-month"
+                        variant="secondary"
+                        onClick={() => window.open(`/manager/preview/${monthData.month.id}`, "_blank", "noopener,noreferrer")}
+                      >
+                        Aperçu
+                      </Button>
+                      <Button
+                        data-testid="planning-unpublish-month"
+                        variant="secondary"
+                        onClick={async () => {
+                          setBusy(true);
+                          try {
+                            await api(`/api/months/${monthData.month.id}/publish`, {
+                              method: "POST",
+                              body: JSON.stringify({ publish: false }),
+                            });
+                            await refreshAll();
+                            setFeedback("Planning repassé en brouillon.");
+                          } catch (value) {
+                            setError(getError(value).message);
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                      >
+                        Dépublier
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        data-testid="planning-download-pdf"
+                        variant="secondary"
+                        onClick={() => window.open(`/api/months/${monthData.month.id}/pdf`, "_blank")}
+                      >
+                        <Download className="h-4 w-4" />
+                        PDF
+                      </Button>
+                      <Button
+                        data-testid="planning-copy-public-link"
+                        variant="secondary"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(monthData.publicUrl);
+                          setFeedback("Lien public copié.");
+                        }}
+                      >
+                        <LinkIcon className="h-4 w-4" />
+                        Copier lien
+                      </Button>
+                      <Button
+                        data-testid="planning-delete-month"
+                        variant="destructive"
+                        onClick={() => void deleteSelectedMonth()}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Supprimer ce mois
+                      </Button>
+                    </div>
+                    <Link href={monthData.publicUrl} target="_blank" className="block truncate text-sm text-sky-700 underline">
+                      {monthData.publicUrl}
+                    </Link>
+                  </>
+                ) : (
+                  <p className="text-sm text-slate-600">Sélectionnez un mois pour afficher le board.</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="min-w-0">
+            {!monthData ? (
+              <Card>
+                <CardContent className="p-6 text-center text-slate-600">Créez ou sélectionnez un mois.</CardContent>
+              </Card>
+            ) : (
+              <PlanningBoard
+                monthAxisStart={monthData.month.startsAt}
+                coverageStart={monthData.month.coverageStartsAt}
+                coverageEnd={monthData.month.coverageEndsAt}
+                volunteers={volunteers}
+                availabilities={monthData.month.availabilities}
+                assignments={monthData.month.assignments}
+                busy={planningBusy}
+                onPlaceAssignment={placePlanningAssignment}
+                onRemoveAssignment={removePlanningAssignment}
+              />
+            )}
+          </div>
+        </div>
       ) : (
         <div className="grid gap-5 xl:grid-cols-[430px_1fr]">
           <div className="space-y-5">
@@ -1434,7 +1882,10 @@ export function ManagerDashboard({ managerAuthEnabled = false }: { managerAuthEn
                     axisStart={monthData.month.startsAt}
                     volunteerFilterId={timelineVolunteerFilter || undefined}
                     gapSuggestions={gapSuggestions}
+                    busy={busy}
                     onSegmentClick={loadSegmentInEditor}
+                    onConfirmSuggestion={confirmTimelineSuggestion}
+                    onRemoveAssignment={removeTimelineAssignment}
                   />
                 </CardContent>
               </Card>

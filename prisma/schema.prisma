@@ -17,6 +17,12 @@ enum AssignmentStatus {
   PROVISIONAL
 }
 
+enum AssignmentLane {
+  A1
+  A2
+  A3
+}
+
 enum AssignmentSource {
   MANUAL
   DRAFT
@@ -223,6 +229,7 @@ model Assignment {
   planningMonthId String           @map("planning_month_id")
   startTime       DateTime         @map("start_time")
   endTime         DateTime         @map("end_time")
+  lane            AssignmentLane?
   status          AssignmentStatus @default(CONFIRMED)
   source          AssignmentSource @default(MANUAL)
   createdAt       DateTime         @default(now()) @map("created_at")
@@ -233,6 +240,7 @@ model Assignment {
 
   @@index([planningMonthId, startTime, endTime])
   @@index([volunteerId, startTime, endTime])
+  @@index([planningMonthId, lane, startTime, endTime])
   @@map("assignments")
 }
 

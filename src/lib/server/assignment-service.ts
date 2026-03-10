@@ -1,4 +1,4 @@
-import { AssignmentSource, AssignmentStatus } from "@prisma/client";
+import { AssignmentLane, AssignmentSource, AssignmentStatus } from "@prisma/client";
 import { ApiError } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { validateVolunteerAssignment } from "@/lib/server/assignment-rules";
@@ -41,6 +41,7 @@ export async function createAssignments(params: {
   volunteerIds: string[];
   startTime: Date;
   endTime: Date;
+  lane?: AssignmentLane | null;
   status?: AssignmentStatus;
   source?: AssignmentSource;
   ignoreRestWarning?: boolean;
@@ -53,12 +54,17 @@ export async function createAssignments(params: {
     throw new ApiError(400, "Sélectionnez deux volontaires différents pour une garde en binôme.");
   }
 
+  if (params.lane && params.volunteerIds.length !== 1) {
+    throw new ApiError(400, "Une affectation sur une lane doit concerner un seul volontaire.");
+  }
+
   for (const volunteerId of params.volunteerIds) {
     await validateVolunteerAssignment({
       planningMonthId: params.planningMonthId,
       volunteerId,
       startTime: params.startTime,
       endTime: params.endTime,
+      lane: params.lane ?? null,
       ignoreRestWarning: params.ignoreRestWarning,
     });
   }
@@ -73,6 +79,7 @@ export async function createAssignments(params: {
           volunteerId,
           startTime: params.startTime,
           endTime: params.endTime,
+          lane: params.lane ?? null,
           status: params.status ?? AssignmentStatus.CONFIRMED,
           source: params.source ?? AssignmentSource.MANUAL,
         },
@@ -96,6 +103,7 @@ export async function createAssignments(params: {
         volunteerId: assignment.volunteerId,
         startTime: assignment.startTime.toISOString(),
         endTime: assignment.endTime.toISOString(),
+        lane: assignment.lane,
         status: assignment.status,
         source: assignment.source,
       },
@@ -111,6 +119,7 @@ export async function updateAssignment(
     volunteerId: string;
     startTime: Date;
     endTime: Date;
+    lane?: AssignmentLane | null;
     status: AssignmentStatus;
     ignoreRestWarning?: boolean;
   },
@@ -122,6 +131,7 @@ export async function updateAssignment(
     volunteerId: params.volunteerId,
     startTime: params.startTime,
     endTime: params.endTime,
+    lane: params.lane ?? existing.lane,
     ignoreRestWarning: params.ignoreRestWarning,
     excludeAssignmentId: existing.id,
   });
@@ -134,6 +144,7 @@ export async function updateAssignment(
       volunteerId: params.volunteerId,
       startTime: params.startTime,
       endTime: params.endTime,
+      lane: params.lane ?? existing.lane,
       status: params.status,
     },
     include: {
@@ -150,12 +161,14 @@ export async function updateAssignment(
         volunteerId: existing.volunteerId,
         startTime: existing.startTime.toISOString(),
         endTime: existing.endTime.toISOString(),
+        lane: existing.lane,
         status: existing.status,
       },
       after: {
         volunteerId: assignment.volunteerId,
         startTime: assignment.startTime.toISOString(),
         endTime: assignment.endTime.toISOString(),
+        lane: assignment.lane,
         status: assignment.status,
       },
     },
@@ -175,12 +188,14 @@ export async function deleteAssignment(assignmentId: string) {
 
   await logAssignmentEvent({
     planningMonthId: existing.planningMonthId,
-    assignmentId: existing.id,
+    assignmentId: null,
     eventType: "DELETED",
     payload: {
+      deletedAssignmentId: existing.id,
       volunteerId: existing.volunteerId,
       startTime: existing.startTime.toISOString(),
       endTime: existing.endTime.toISOString(),
+      lane: existing.lane,
     },
   });
 }

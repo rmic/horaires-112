@@ -27,6 +27,7 @@ type DayTimeline = {
       volunteerId: string;
       volunteerName: string;
       volunteerColor: string;
+      lane?: "A1" | "A2" | "A3" | null;
       status: "CONFIRMED" | "PROVISIONAL";
     }>;
     employeeBlocks: Array<{
@@ -42,7 +43,7 @@ type Gap = {
   missingCount: number;
 };
 
-type PublicPayload = {
+export type PublicSchedulePayload = {
   requiresPassword: boolean;
   month?: {
     year: number;
@@ -53,48 +54,35 @@ type PublicPayload = {
   gaps?: Gap[];
 };
 
-export function PublicScheduleView({ token }: { token: string }) {
+export function PublicScheduleContent({
+  payload,
+  title,
+  description,
+  allowPasswordPrompt = false,
+  onSubmitPassword,
+  passwordError,
+}: {
+  payload: PublicSchedulePayload;
+  title?: string;
+  description?: string;
+  allowPasswordPrompt?: boolean;
+  onSubmitPassword?: (password: string) => void;
+  passwordError?: string;
+}) {
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [payload, setPayload] = useState<PublicPayload | null>(null);
   const [volunteerFilterId, setVolunteerFilterId] = useState("");
-
-  const load = async (passwordValue?: string) => {
-    setLoading(true);
-    try {
-      const query = passwordValue ? `?password=${encodeURIComponent(passwordValue)}` : "";
-      const response = await fetch(`/api/published/${token}${query}`);
-      const data = (await response.json()) as PublicPayload & { error?: string };
-
-      if (!response.ok) {
-        throw new Error(data.error ?? "Erreur de chargement");
-      }
-
-      setPayload(data);
-      setError("");
-    } catch (value) {
-      setError(value instanceof Error ? value.message : "Erreur inconnue");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  const dayTimelines = useMemo(() => payload.dayTimelines ?? [], [payload.dayTimelines]);
 
   const groupedByWeek = useMemo(() => {
-    if (!payload?.dayTimelines) return [] as Array<{ label: string; timelines: DayTimeline[] }>;
+    if (dayTimelines.length === 0) return [] as Array<{ label: string; timelines: DayTimeline[] }>;
 
     const visibleTimelines = volunteerFilterId
-      ? payload.dayTimelines.filter((timeline) =>
+      ? dayTimelines.filter((timeline) =>
           timeline.segments.some((segment) =>
             segment.volunteerAssignments.some((assignment) => assignment.volunteerId === volunteerFilterId),
           ),
         )
-      : payload.dayTimelines;
+      : dayTimelines;
 
     const groups = new Map<string, DayTimeline[]>();
 
@@ -115,17 +103,9 @@ export function PublicScheduleView({ token }: { token: string }) {
         timelines,
       };
     });
-  }, [payload?.dayTimelines, volunteerFilterId]);
+  }, [dayTimelines, volunteerFilterId]);
 
-  if (loading) {
-    return <main className="p-6 text-center text-slate-600">Chargement...</main>;
-  }
-
-  if (!payload) {
-    return <main className="p-6 text-center text-red-700">Impossible de charger le planning.</main>;
-  }
-
-  if (payload.requiresPassword) {
+  if (payload.requiresPassword && allowPasswordPrompt) {
     return (
       <main className="mx-auto flex min-h-screen w-full max-w-lg items-center px-4">
         <Card className="w-full">
@@ -140,10 +120,10 @@ export function PublicScheduleView({ token }: { token: string }) {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
-            <Button className="w-full" onClick={() => void load(password)}>
+            <Button className="w-full" onClick={() => onSubmitPassword?.(password)}>
               Ouvrir
             </Button>
-            {error && <p className="text-sm text-red-700">{error}</p>}
+            {passwordError && <p className="text-sm text-red-700">{passwordError}</p>}
           </CardContent>
         </Card>
       </main>
@@ -155,9 +135,9 @@ export function PublicScheduleView({ token }: { token: string }) {
       <Card>
         <CardHeader>
           <CardTitle>
-            Planning publié {String(payload.month?.month).padStart(2, "0")}/{payload.month?.year}
+            {title ?? `Planning publié ${String(payload.month?.month).padStart(2, "0")}/${payload.month?.year}`}
           </CardTitle>
-          <CardDescription>Lecture seule volontaires</CardDescription>
+          <CardDescription>{description ?? "Lecture seule volontaires"}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
           <Badge variant="success">Vert = confirmé</Badge>
@@ -222,5 +202,57 @@ export function PublicScheduleView({ token }: { token: string }) {
         </Card>
       )}
     </main>
+  );
+}
+
+export function PublicScheduleView({ token }: { token: string }) {
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [payload, setPayload] = useState<PublicSchedulePayload | null>(null);
+
+  const load = async (passwordValue?: string) => {
+    setLoading(true);
+    try {
+      const query = passwordValue ? `?password=${encodeURIComponent(passwordValue)}` : "";
+      const response = await fetch(`/api/published/${token}${query}`);
+      const data = (await response.json()) as PublicSchedulePayload & { error?: string };
+
+      if (!response.ok) {
+        throw new Error(data.error ?? "Erreur de chargement");
+      }
+
+      setPayload(data);
+      setError("");
+    } catch (value) {
+      setError(value instanceof Error ? value.message : "Erreur inconnue");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  if (loading) {
+    return <main className="p-6 text-center text-slate-600">Chargement...</main>;
+  }
+
+  if (!payload) {
+    return <main className="p-6 text-center text-red-700">Impossible de charger le planning.</main>;
+  }
+
+  return (
+    <>
+      <PublicScheduleContent
+        payload={payload}
+        allowPasswordPrompt
+        passwordError={error}
+        onSubmitPassword={(password) => {
+          void load(password);
+        }}
+      />
+    </>
   );
 }

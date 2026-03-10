@@ -1,7 +1,14 @@
 import { addHours, isAfter, isBefore } from "date-fns";
 import { AvailabilityStatus } from "@prisma/client";
 import { ApiError } from "@/lib/api";
-import { getRestWarning, guardCount, hasOverlap, intervalContainedIn, validateVolunteerShift } from "@/lib/constraints";
+import {
+  getRestWarning,
+  guardCount,
+  hasOverlap,
+  intervalContainedIn,
+  projectedGuardCount,
+  validateVolunteerShift,
+} from "@/lib/constraints";
 import { prisma } from "@/lib/prisma";
 import { getPlanningMonthWindow } from "@/lib/time";
 
@@ -74,11 +81,21 @@ export function validateVolunteerAssignmentAgainstContext(params: {
     })),
     params.volunteer.id,
   );
+  const projectedGuards = projectedGuardCount(
+    interval,
+    relevantAssignments.map((assignment) => ({
+      startTime: assignment.startTime,
+      endTime: assignment.endTime,
+    })),
+  );
 
-  if (params.volunteer.maxGuardsPerMonth !== null && currentGuards >= params.volunteer.maxGuardsPerMonth) {
+  if (
+    params.volunteer.maxGuardsPerMonth !== null &&
+    projectedGuards > params.volunteer.maxGuardsPerMonth
+  ) {
     throw new ApiError(
       400,
-      `Limite mensuelle atteinte (${params.volunteer.maxGuardsPerMonth} gardes max pour ${params.volunteer.name} sur ce mois).`,
+      `Limite mensuelle atteinte (${currentGuards}/${params.volunteer.maxGuardsPerMonth} gardes pour ${params.volunteer.name} sur ce mois).`,
     );
   }
 
@@ -107,6 +124,7 @@ export async function validateVolunteerAssignment(params: {
   volunteerId: string;
   startTime: Date;
   endTime: Date;
+  lane?: "A1" | "A2" | "A3" | null;
   ignoreRestWarning?: boolean;
   excludeAssignmentId?: string;
 }) {
@@ -157,6 +175,32 @@ export async function validateVolunteerAssignment(params: {
 
   if (!volunteer) {
     throw new ApiError(404, "Volontaire introuvable.");
+  }
+
+  if (params.lane) {
+    const overlappingLaneAssignment = await prisma.assignment.findFirst({
+      where: {
+        planningMonthId: params.planningMonthId,
+        lane: params.lane,
+        ...(params.excludeAssignmentId
+          ? {
+              id: {
+                not: params.excludeAssignmentId,
+              },
+            }
+          : {}),
+        startTime: {
+          lt: params.endTime,
+        },
+        endTime: {
+          gt: params.startTime,
+        },
+      },
+    });
+
+    if (overlappingLaneAssignment) {
+      throw new ApiError(400, `Le rôle ${params.lane} est déjà occupé sur cet intervalle.`);
+    }
   }
 
   const warning = validateVolunteerAssignmentAgainstContext({

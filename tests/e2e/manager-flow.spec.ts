@@ -121,3 +121,83 @@ test("manager can create schedule, visualize gaps, publish, and open read-only v
   await expect(readonlyPage.getByText("Liste des créneaux à couvrir")).toBeVisible();
   await expect(readonlyPage.getByText(/personne manquante/).first()).toBeVisible();
 });
+
+test("manager can confirm a partial candidate from the monthly tooltip and unassign them", async ({ page }) => {
+  const seed = Date.now() + 1;
+  const month = (seed % 12) + 1;
+  const year = 2030 + (Math.floor(seed / 12) % 60);
+  const monthLabel = formatMonth(month);
+  const monthRowId = `month-row-${year}-${monthLabel}`;
+  const aliceName = `Alice Split E2E ${year}-${monthLabel}`;
+  const bobName = `Bob Split E2E ${year}-${monthLabel}`;
+
+  await page.goto("/manager");
+  await expect(page.getByText("Horaire 112 - Manager")).toBeVisible();
+
+  for (const [name, color] of [
+    [aliceName, "#16a34a"],
+    [bobName, "#f97316"],
+  ] as const) {
+    await page.getByTestId("new-volunteer-name").fill(name);
+    await page.getByTestId("new-volunteer-color").fill(color);
+    await page.getByTestId("create-volunteer").click();
+    await expect(page.locator(`tbody input[value="${name}"]`).first()).toBeVisible();
+  }
+
+  if ((await page.getByTestId(monthRowId).count()) > 0) {
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByTestId(monthRowId).first().click();
+    await page.getByTestId("delete-month").click();
+    await expect(page.getByText("Mois supprimé.")).toBeVisible();
+  }
+
+  await page.getByTestId("create-month-year").fill(String(year));
+  await page.getByTestId("create-month-month").selectOption(String(month));
+  await page.getByTestId("create-month").click();
+  await page.getByTestId(monthRowId).first().click();
+  await expect(page.getByText(`Actif: ${monthLabel}/${year}`)).toBeVisible();
+
+  await page.getByTestId("availability-volunteer-select").selectOption({ label: aliceName });
+  await dragAvailabilityRange(page, "availability-cell-0-6", "availability-cell-0-17");
+
+  await page.getByTestId("availability-volunteer-select").selectOption({ label: bobName });
+  await dragAvailabilityRange(page, "availability-cell-0-12", "availability-cell-0-17");
+
+  const dayKey = `${year}-${monthLabel}-01`;
+  const laneA1CoverableBlock = page
+    .locator(
+      `[data-testid="timeline-block"][data-day="${dayKey}"][data-lane="0"][data-variant="gap-coverable-full"]`,
+    )
+    .first();
+
+  await expect(laneA1CoverableBlock).toBeVisible();
+  await laneA1CoverableBlock.hover();
+
+  const confirmButtons = page.locator('[data-testid^="timeline-confirm-A1-"]:visible');
+  await expect(confirmButtons).toHaveCount(2);
+  await confirmButtons.nth(1).click();
+
+  const confirmedBobBlock = page
+    .locator(`[data-testid="timeline-block"][data-day="${dayKey}"][data-lane="0"][data-variant="volunteer"]`)
+    .filter({ hasText: bobName })
+    .first();
+  await expect(confirmedBobBlock).toBeVisible();
+
+  const remainingGapBlock = page
+    .locator(`[data-testid="timeline-block"][data-day="${dayKey}"][data-lane="0"][data-variant^="gap"]`)
+    .first();
+  await expect(remainingGapBlock).toBeVisible();
+
+  await confirmedBobBlock.click();
+  const unassignButton = page.locator('[data-testid^="timeline-unassign-A1-"]:visible').first();
+  await expect(unassignButton).toBeVisible();
+  await unassignButton.click();
+
+  await expect(
+    page
+      .locator(`[data-testid="timeline-block"][data-day="${dayKey}"][data-lane="0"][data-variant="volunteer"]`)
+      .filter({ hasText: bobName }),
+  ).toHaveCount(0);
+
+  await expect(laneA1CoverableBlock).toBeVisible();
+});

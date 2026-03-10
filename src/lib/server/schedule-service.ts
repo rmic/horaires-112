@@ -77,6 +77,7 @@ type WorkingAssignment = {
   planningMonthId: string;
   startTime: Date;
   endTime: Date;
+  lane: "A1" | "A2" | "A3" | null;
   status: AssignmentStatus;
   source: AssignmentSource;
   volunteerName: string;
@@ -240,6 +241,7 @@ function computeScheduleWindow(params: {
       volunteerId: assignment.volunteerId,
       volunteerName: assignment.volunteerName,
       volunteerColor: assignment.volunteerColor,
+      lane: assignment.lane,
       status: assignment.status,
       startTime: assignment.startTime,
       endTime: assignment.endTime,
@@ -300,6 +302,7 @@ function mapSegmentToSlot(planningMonthId: string, segment: ReturnType<typeof co
       volunteerId: assignment.volunteerId,
       volunteerName: assignment.volunteerName,
       volunteerColor: assignment.volunteerColor,
+      lane: assignment.lane,
       status: assignment.status,
     })),
     employeeBlocks: segment.employeeBlocks.map((block) => ({
@@ -495,6 +498,7 @@ function cloneWorkingAssignments(assignments: Awaited<ReturnType<typeof loadMont
     planningMonthId: assignment.planningMonthId,
     startTime: new Date(assignment.startTime),
     endTime: new Date(assignment.endTime),
+    lane: assignment.lane,
     status: assignment.status,
     source: assignment.source,
     volunteerName: assignment.volunteer.name,
@@ -560,6 +564,7 @@ export async function previewScheduleAdjustment(scheduleAdjustmentDraftId: strin
           planningMonthId: draft.planningMonthId,
           startTime: interval.startTime,
           endTime: interval.endTime,
+          lane: null,
           status: operation.status,
           source: operation.source,
           volunteerName: volunteerContext.name,
@@ -733,6 +738,7 @@ export async function commitScheduleAdjustment(scheduleAdjustmentDraftId: string
             volunteerId: operation.volunteerId,
             startTime: interval.startTime,
             endTime: interval.endTime,
+            lane: null,
             status: operation.status,
             source: operation.source,
           },
@@ -865,9 +871,10 @@ export async function commitScheduleAdjustment(scheduleAdjustmentDraftId: string
     deleted.map((assignment) =>
       logAssignmentEvent({
         planningMonthId: assignment.planningMonthId,
-        assignmentId: assignment.id,
+        assignmentId: null,
         eventType: "DELETED",
         payload: {
+          deletedAssignmentId: assignment.id,
           volunteerId: assignment.volunteerId,
           startTime: assignment.startTime.toISOString(),
           endTime: assignment.endTime.toISOString(),

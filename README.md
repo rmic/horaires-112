@@ -88,6 +88,7 @@ Strategie retenue:
 
 Documentation detaillee:
 - [Deployment guide](docs/deployment.md)
+- [Migration lane A1/A2 sur Neon](docs/assignment-lane-migration.md)
 
 ## Verification locale
 ```bash
