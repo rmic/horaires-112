@@ -17,6 +17,7 @@ export const GET = (_request: Request, context: { params: Promise<{ id: string }
     const pdf = await renderSchedulePdf({
       monthLabel: getMonthLabel(snapshot.month.year, snapshot.month.month),
       dayTimelines: snapshot.dayTimelines,
+      gaps: snapshot.gaps,
     });
 
     return new Response(new Uint8Array(pdf), {
