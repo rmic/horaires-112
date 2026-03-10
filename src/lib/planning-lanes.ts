@@ -30,10 +30,20 @@ export type PlanningAvailabilityBlock = PlanningAvailability & {
   key: string;
 };
 
+export type PlanningAvailabilityDisplayBlock = PlanningAvailabilityBlock & {
+  state: "available" | "assigned";
+};
+
 export type PlanningLaneBlock = PlanningAssignment & {
   key: string;
   projectedLane: PlanningLane;
   explicitLane: boolean;
+};
+
+export type PlanningLaneShiftSummary = {
+  fullyCovered: number;
+  partiallyCovered: number;
+  total: number;
 };
 
 export type PlanningPlacementResolution = {
@@ -173,6 +183,14 @@ function mergeIntervals<T extends IsoInterval>(items: T[]) {
   return merged;
 }
 
+function countIntervalsByMaxDuration<T extends IsoInterval>(items: T[], maxHours: number) {
+  return mergeIntervals(items).reduce((total, interval) => {
+    const durationMs = new Date(interval.endTime).getTime() - new Date(interval.startTime).getTime();
+    const maxDurationMs = maxHours * 3_600_000;
+    return total + Math.max(1, Math.ceil(durationMs / maxDurationMs));
+  }, 0);
+}
+
 function laneHasOverlap(blocks: PlanningLaneBlock[], interval: IsoInterval) {
   return blocks.some((block) => overlaps(block, interval));
 }
@@ -262,6 +280,97 @@ export function buildPlanningAvailabilityBlocks(
   return sortByStartTime(merged);
 }
 
+export function buildPlanningAvailabilityDisplayBlocks(params: {
+  availabilities: PlanningAvailability[];
+  assignments: PlanningAssignment[];
+  axisStart: string;
+}) {
+  const availabilityBlocks = buildPlanningAvailabilityBlocks(params.availabilities, params.axisStart);
+  const displayBlocks: PlanningAvailabilityDisplayBlock[] = [];
+
+  for (const block of availabilityBlocks) {
+    const overlappingAssignments = sortByStartTime(
+      params.assignments.filter(
+        (assignment) =>
+          assignment.volunteerId === block.volunteerId &&
+          overlaps(assignment, {
+            startTime: block.startTime,
+            endTime: block.endTime,
+          }),
+      ),
+    );
+
+    if (overlappingAssignments.length === 0) {
+      displayBlocks.push({
+        ...block,
+        state: "available",
+      });
+      continue;
+    }
+
+    const boundaries = [new Date(block.startTime).getTime(), new Date(block.endTime).getTime()];
+    for (const assignment of overlappingAssignments) {
+      const clipped = intersection(assignment, block);
+      if (!clipped) {
+        continue;
+      }
+
+      boundaries.push(new Date(clipped.startTime).getTime(), new Date(clipped.endTime).getTime());
+    }
+
+    const sortedBoundaries = [...new Set(boundaries)].sort((left, right) => left - right);
+    const splitBlocks: PlanningAvailabilityDisplayBlock[] = [];
+
+    for (let index = 0; index < sortedBoundaries.length - 1; index += 1) {
+      const startTime = new Date(sortedBoundaries[index]).toISOString();
+      const endTime = new Date(sortedBoundaries[index + 1]).toISOString();
+      const interval = { startTime, endTime };
+      const state = overlappingAssignments.some((assignment) => overlaps(assignment, interval))
+        ? "assigned"
+        : "available";
+
+      const previous = splitBlocks.at(-1);
+      if (previous && previous.state === state && previous.endTime === startTime) {
+        previous.endTime = endTime;
+        previous.key = `${block.volunteerId}:${previous.startTime}:${previous.endTime}:${state}`;
+        continue;
+      }
+
+      splitBlocks.push({
+        ...block,
+        startTime,
+        endTime,
+        state,
+        key: `${block.volunteerId}:${startTime}:${endTime}:${state}`,
+      });
+    }
+
+    displayBlocks.push(...splitBlocks);
+  }
+
+  return sortByStartTime(displayBlocks);
+}
+
+export function countPlanningAvailabilityCapacity(
+  availabilities: PlanningAvailability[],
+  volunteerId: string,
+) {
+  return countIntervalsByMaxDuration(
+    availabilities.filter((availability) => availability.volunteerId === volunteerId),
+    12,
+  );
+}
+
+export function countPlanningConfirmedAssignments(
+  assignments: PlanningAssignment[],
+  volunteerId: string,
+) {
+  return countIntervalsByMaxDuration(
+    assignments.filter((assignment) => assignment.volunteerId === volunteerId && assignment.status === "CONFIRMED"),
+    12,
+  );
+}
+
 export function projectAssignmentsToLanes(assignments: PlanningAssignment[]) {
   const lanes: Record<PlanningLane, PlanningLaneBlock[]> = {
     A1: [],
@@ -288,6 +397,55 @@ export function projectAssignmentsToLanes(assignments: PlanningAssignment[]) {
   }
 
   return lanes;
+}
+
+export function summarizePlanningLaneCoverage(params: {
+  laneBlocks: Record<PlanningLane, PlanningLaneBlock[]>;
+  coverageStart: string;
+  coverageEnd: string;
+}) {
+  const summaries: Record<PlanningLane, PlanningLaneShiftSummary> = {
+    A1: { fullyCovered: 0, partiallyCovered: 0, total: 0 },
+    A2: { fullyCovered: 0, partiallyCovered: 0, total: 0 },
+    A3: { fullyCovered: 0, partiallyCovered: 0, total: 0 },
+  };
+
+  const shiftStarts: string[] = [];
+  let cursor = new Date(params.coverageStart);
+  const end = new Date(params.coverageEnd);
+
+  while (cursor < end) {
+    shiftStarts.push(cursor.toISOString());
+    cursor = new Date(cursor.getTime() + 12 * 3_600_000);
+  }
+
+  for (const lane of PLANNING_LANES) {
+    const merged = mergeIntervals(params.laneBlocks[lane]);
+    summaries[lane].total = shiftStarts.length;
+
+    for (const shiftStart of shiftStarts) {
+      const shiftEnd = new Date(new Date(shiftStart).getTime() + 12 * 3_600_000).toISOString();
+      const interval = { startTime: shiftStart, endTime: shiftEnd };
+
+      const fullyCovered = merged.some(
+        (segment) =>
+          new Date(segment.startTime).getTime() <= new Date(interval.startTime).getTime() &&
+          new Date(segment.endTime).getTime() >= new Date(interval.endTime).getTime(),
+      );
+
+      if (fullyCovered) {
+        summaries[lane].fullyCovered += 1;
+        continue;
+      }
+
+      const partiallyCovered = merged.some((segment) => overlaps(segment, interval));
+      if (partiallyCovered) {
+        summaries[lane].partiallyCovered += 1;
+      }
+    }
+  }
+
+  return summaries;
 }
 
 export function getPlanningLaneConflicts(

@@ -3,11 +3,14 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import { formatShortDate, formatAxisHour, remapToDisplayAxis } from "@/lib/time";
 import {
-  buildPlanningAvailabilityBlocks,
+  buildPlanningAvailabilityDisplayBlocks,
   buildPlanningPlacementPlan,
+  countPlanningAvailabilityCapacity,
+  countPlanningConfirmedAssignments,
   getPlanningLaneConflicts,
   PLANNING_LANES,
   projectAssignmentsToLanes,
+  summarizePlanningLaneCoverage,
   type PlanningAssignment,
   type PlanningAvailability,
   type PlanningLane,
@@ -22,6 +25,7 @@ type Volunteer = {
   id: string;
   name: string;
   color: string;
+  monthMaxGuardsPerMonth?: number | null;
 };
 
 type Assignment = {
@@ -86,7 +90,9 @@ type PlanningBoardProps = {
 };
 
 const HOUR_WIDTH = 24;
-const LABEL_WIDTH = 240;
+const NAME_WIDTH = 260;
+const COUNT_WIDTH = 132;
+const LABEL_WIDTH = NAME_WIDTH + COUNT_WIDTH;
 const ROW_HEIGHT = 32;
 
 function toPlanningAssignments(assignments: Assignment[]): PlanningAssignment[] {
@@ -192,12 +198,21 @@ export function PlanningBoard({
   }, []);
 
   const planningAvailabilities = useMemo(() => toPlanningAvailabilities(availabilities), [availabilities]);
+  const activeAssignments = useMemo(
+    () => displayAssignments.filter((assignment) => !activeSuppressedAssignmentIds.includes(assignment.id)),
+    [activeSuppressedAssignmentIds, displayAssignments],
+  );
   const availabilityBlocks = useMemo(
-    () => buildPlanningAvailabilityBlocks(planningAvailabilities, coverageStart),
-    [coverageStart, planningAvailabilities],
+    () =>
+      buildPlanningAvailabilityDisplayBlocks({
+        availabilities: planningAvailabilities,
+        assignments: activeAssignments,
+        axisStart: coverageStart,
+      }),
+    [activeAssignments, coverageStart, planningAvailabilities],
   );
   const availabilityBlocksByVolunteer = useMemo(() => {
-    const map = new Map<string, ReturnType<typeof buildPlanningAvailabilityBlocks>>();
+    const map = new Map<string, typeof availabilityBlocks>();
     for (const volunteer of volunteers) {
       map.set(
         volunteer.id,
@@ -207,12 +222,33 @@ export function PlanningBoard({
     return map;
   }, [availabilityBlocks, volunteers]);
 
-  const laneBlocks = useMemo(
+  const volunteerPlanningStats = useMemo(() => {
+    return new Map(
+      volunteers.map((volunteer) => {
+        const confirmedCount = countPlanningConfirmedAssignments(activeAssignments, volunteer.id);
+        const capacity =
+          volunteer.monthMaxGuardsPerMonth ?? countPlanningAvailabilityCapacity(planningAvailabilities, volunteer.id);
+
+        return [
+          volunteer.id,
+          {
+            confirmedCount,
+            capacity,
+          },
+        ] as const;
+      }),
+    );
+  }, [activeAssignments, planningAvailabilities, volunteers]);
+
+  const laneBlocks = useMemo(() => projectAssignmentsToLanes(activeAssignments), [activeAssignments]);
+  const laneCoverageSummary = useMemo(
     () =>
-      projectAssignmentsToLanes(
-        displayAssignments.filter((assignment) => !activeSuppressedAssignmentIds.includes(assignment.id)),
-      ),
-    [activeSuppressedAssignmentIds, displayAssignments],
+      summarizePlanningLaneCoverage({
+        laneBlocks,
+        coverageStart,
+        coverageEnd,
+      }),
+    [coverageEnd, coverageStart, laneBlocks],
   );
 
   const dayHeaders = useMemo(
@@ -378,9 +414,12 @@ export function PlanningBoard({
         <div className="max-h-[78vh] overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm">
           <div style={{ minWidth: LABEL_WIDTH + timelineWidth }}>
             <div className="sticky top-0 z-30 border-b border-slate-200 bg-slate-100 shadow-sm">
-              <div className="grid" style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}>
+              <div className="grid" style={{ gridTemplateColumns: `${NAME_WIDTH}px ${COUNT_WIDTH}px ${timelineWidth}px` }}>
                 <div className="sticky left-0 z-40 border-r border-slate-200 bg-slate-100 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-600">
                   Disponibilités
+                </div>
+                <div className="sticky z-40 border-r border-slate-200 bg-slate-100 px-3 py-3 text-center text-xs font-black uppercase tracking-wide text-slate-600" style={{ left: NAME_WIDTH }}>
+                  Gardes
                 </div>
                 <div className="overflow-hidden">
                   <div className="flex border-b border-slate-200">
@@ -420,71 +459,96 @@ export function PlanningBoard({
 
             <div className="border-b border-slate-200">
               {volunteers.map((volunteer) => (
-                <div
-                  key={`availability-row-${volunteer.id}`}
-                  className="grid border-b border-slate-100"
-                  style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px`, minHeight: ROW_HEIGHT }}
-                >
-                  <div className="sticky left-0 z-10 flex items-center overflow-hidden border-r border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700">
-                    <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{volunteer.name}</span>
-                  </div>
-                  <div
-                    className="relative bg-white"
-                    style={{
-                      minHeight: ROW_HEIGHT,
-                      backgroundImage:
-                        "repeating-linear-gradient(to right, rgba(226,232,240,0.7) 0, rgba(226,232,240,0.7) 1px, transparent 1px, transparent 24px)",
-                    }}
-                  >
-                    {(availabilityBlocksByVolunteer.get(volunteer.id) ?? []).map((block) => {
-                      const position = positionForInterval(block.startTime, block.endTime);
-                      return (
-                        <div
-                          key={block.key}
-                          draggable={!busy}
-                          onDragStart={(event) => {
-                            setDraggingBlock({
-                              volunteerId: block.volunteerId,
-                              volunteerName: block.volunteerName,
-                              volunteerColor: block.volunteerColor,
-                              startTime: block.startTime,
-                              endTime: block.endTime,
-                            });
-                            event.dataTransfer.effectAllowed = "copyMove";
-                            event.dataTransfer.setData(
-                              "application/x-horaire112-planning-block",
-                              JSON.stringify({
-                                volunteerId: block.volunteerId,
-                                volunteerName: block.volunteerName,
-                                volunteerColor: block.volunteerColor,
-                                startTime: block.startTime,
-                                endTime: block.endTime,
-                              }),
-                            );
-                          }}
-                          onDragEnd={() => {
-                            setDraggingBlock(null);
-                            setHoverLane(null);
-                          }}
-                          className="absolute top-1 bottom-1 rounded-md border border-emerald-600 bg-emerald-500/85 transition hover:bg-emerald-500"
-                          style={{
-                            left: position.left,
-                            width: position.width,
-                          }}
-                          title={`${volunteer.name} ${formatRangeLabel(block.startTime, block.endTime, axisStartDate)}`}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
+                (() => {
+                  const stats = volunteerPlanningStats.get(volunteer.id);
+
+                  return (
+                    <div
+                      key={`availability-row-${volunteer.id}`}
+                      className="grid border-b border-slate-100"
+                      style={{ gridTemplateColumns: `${NAME_WIDTH}px ${COUNT_WIDTH}px ${timelineWidth}px`, minHeight: ROW_HEIGHT }}
+                    >
+                      <div className="sticky left-0 z-10 flex items-center overflow-hidden border-r border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700">
+                        <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{volunteer.name}</span>
+                      </div>
+                      <div
+                        className="sticky z-10 flex items-center justify-center border-r border-slate-200 bg-white px-2 text-sm font-black text-slate-600"
+                        style={{ left: NAME_WIDTH }}
+                      >
+                        {stats ? `${stats.confirmedCount}/${stats.capacity}` : "0/0"}
+                      </div>
+                      <div
+                        className="relative bg-white"
+                        style={{
+                          minHeight: ROW_HEIGHT,
+                          backgroundImage:
+                            "repeating-linear-gradient(to right, rgba(226,232,240,0.7) 0, rgba(226,232,240,0.7) 1px, transparent 1px, transparent 24px)",
+                        }}
+                      >
+                        {(availabilityBlocksByVolunteer.get(volunteer.id) ?? []).map((block) => {
+                          const position = positionForInterval(block.startTime, block.endTime);
+                          return (
+                            <div
+                              key={block.key}
+                              draggable={!busy && block.state === "available"}
+                              onDragStart={(event) => {
+                                if (block.state !== "available") {
+                                  event.preventDefault();
+                                  return;
+                                }
+
+                                setDraggingBlock({
+                                  volunteerId: block.volunteerId,
+                                  volunteerName: block.volunteerName,
+                                  volunteerColor: block.volunteerColor,
+                                  startTime: block.startTime,
+                                  endTime: block.endTime,
+                                });
+                                event.dataTransfer.effectAllowed = "copyMove";
+                                event.dataTransfer.setData(
+                                  "application/x-horaire112-planning-block",
+                                  JSON.stringify({
+                                    volunteerId: block.volunteerId,
+                                    volunteerName: block.volunteerName,
+                                    volunteerColor: block.volunteerColor,
+                                    startTime: block.startTime,
+                                    endTime: block.endTime,
+                                  }),
+                                );
+                              }}
+                              onDragEnd={() => {
+                                setDraggingBlock(null);
+                                setHoverLane(null);
+                              }}
+                              className={cn(
+                                "absolute top-1 bottom-1 rounded-md border transition",
+                                block.state === "assigned"
+                                  ? "cursor-not-allowed border-slate-500 bg-slate-300/90"
+                                  : "border-emerald-600 bg-emerald-500/85 hover:bg-emerald-500",
+                              )}
+                              style={{
+                                left: position.left,
+                                width: position.width,
+                              }}
+                              title={`${volunteer.name} ${formatRangeLabel(block.startTime, block.endTime, axisStartDate)}${
+                                block.state === "assigned" ? " (déjà affecté)" : ""
+                              }`}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()
               ))}
             </div>
 
             <div>
-              <div className="grid bg-slate-100" style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}>
-                <div className="border-r border-slate-200 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-600">
+              <div className="grid bg-slate-100" style={{ gridTemplateColumns: `${NAME_WIDTH}px ${COUNT_WIDTH}px ${timelineWidth}px` }}>
+                <div className="sticky left-0 z-10 border-r border-slate-200 bg-slate-100 px-4 py-3 text-xs font-black uppercase tracking-wide text-slate-600">
                   Affectations
                 </div>
+                <div className="sticky z-10 border-r border-slate-200 bg-slate-100" style={{ left: NAME_WIDTH }} />
                 <div
                   className={cn(
                     "border-b border-slate-200 px-3 py-3 text-xs font-semibold text-slate-500 transition",
@@ -514,10 +578,18 @@ export function PlanningBoard({
                 <div
                   key={lane}
                   className="grid border-b border-slate-100"
-                  style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px`, minHeight: ROW_HEIGHT }}
+                  style={{ gridTemplateColumns: `${NAME_WIDTH}px ${COUNT_WIDTH}px ${timelineWidth}px`, minHeight: ROW_HEIGHT }}
                 >
                   <div className="sticky left-0 z-10 flex items-center border-r border-slate-200 bg-white px-4 text-sm font-black text-slate-700">
                     {lane}
+                  </div>
+                  <div
+                    className="sticky z-10 flex items-center justify-center border-r border-slate-200 bg-white px-2 text-xs font-black text-slate-600"
+                    style={{ left: NAME_WIDTH }}
+                  >
+                    {lane === "A1" || lane === "A2"
+                      ? `${laneCoverageSummary[lane].fullyCovered} (${laneCoverageSummary[lane].partiallyCovered}) / ${laneCoverageSummary[lane].total}`
+                      : "—"}
                   </div>
                   <div
                     className={cn(

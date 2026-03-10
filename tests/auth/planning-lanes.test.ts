@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildPlanningAvailabilityDisplayBlocks,
   buildPlanningAvailabilityBlocks,
   buildPlanningPlacementPlan,
+  countPlanningAvailabilityCapacity,
+  countPlanningConfirmedAssignments,
+  summarizePlanningLaneCoverage,
   splitIntervalOnPlanningBoundaries,
   type PlanningAssignment,
 } from "@/lib/planning-lanes";
@@ -210,4 +214,189 @@ test("merges contiguous blocks per volunteer even when other volunteers have int
       },
     ],
   );
+});
+
+test("counts default availability capacity in blocks of up to 12h even across the 18h boundary", () => {
+  const capacity = countPlanningAvailabilityCapacity(
+    [
+      {
+        id: "m1",
+        volunteerId: "mathilde",
+        volunteerName: "Mathilde",
+        volunteerColor: "#10b981",
+        startTime: "2026-04-02T12:00:00.000Z",
+        endTime: "2026-04-02T20:00:00.000Z",
+      },
+      {
+        id: "m2",
+        volunteerId: "mathilde",
+        volunteerName: "Mathilde",
+        volunteerColor: "#10b981",
+        startTime: "2026-04-03T04:00:00.000Z",
+        endTime: "2026-04-04T04:00:00.000Z",
+      },
+    ],
+    "mathilde",
+  );
+
+  assert.equal(capacity, 3);
+});
+
+test("counts contiguous confirmed planning assignments as a single guard", () => {
+  const confirmed = countPlanningConfirmedAssignments(
+    [
+      {
+        id: "a1",
+        volunteerId: "mathilde",
+        volunteerName: "Mathilde",
+        volunteerColor: "#10b981",
+        startTime: "2026-04-02T12:00:00.000Z",
+        endTime: "2026-04-02T16:00:00.000Z",
+        lane: "A1",
+        status: "CONFIRMED",
+        source: "MANUAL",
+      },
+      {
+        id: "a2",
+        volunteerId: "mathilde",
+        volunteerName: "Mathilde",
+        volunteerColor: "#10b981",
+        startTime: "2026-04-02T16:00:00.000Z",
+        endTime: "2026-04-02T20:00:00.000Z",
+        lane: "A1",
+        status: "CONFIRMED",
+        source: "MANUAL",
+      },
+      {
+        id: "a3",
+        volunteerId: "mathilde",
+        volunteerName: "Mathilde",
+        volunteerColor: "#10b981",
+        startTime: "2026-04-03T04:00:00.000Z",
+        endTime: "2026-04-03T08:00:00.000Z",
+        lane: "A2",
+        status: "PROVISIONAL",
+        source: "MANUAL",
+      },
+    ],
+    "mathilde",
+  );
+
+  assert.equal(confirmed, 1);
+});
+
+test("grays only the retained part of an availability block once it is assigned", () => {
+  const blocks = buildPlanningAvailabilityDisplayBlocks({
+    availabilities: [
+      {
+        id: "disp-1",
+        volunteerId: "mathilde",
+        volunteerName: "Mathilde",
+        volunteerColor: "#10b981",
+        startTime: "2026-04-04T12:00:00.000Z",
+        endTime: "2026-04-04T20:00:00.000Z",
+      },
+    ],
+    assignments: [
+      {
+        id: "ass-1",
+        volunteerId: "mathilde",
+        volunteerName: "Mathilde",
+        volunteerColor: "#10b981",
+        startTime: "2026-04-04T12:00:00.000Z",
+        endTime: "2026-04-04T16:00:00.000Z",
+        lane: "A1",
+        status: "CONFIRMED",
+        source: "MANUAL",
+      },
+    ],
+    axisStart: "2026-04-01T04:00:00.000Z",
+  });
+
+  assert.deepEqual(
+    blocks.map((block) => ({
+      startTime: block.startTime,
+      endTime: block.endTime,
+      state: block.state,
+    })),
+    [
+      {
+        startTime: "2026-04-04T12:00:00.000Z",
+        endTime: "2026-04-04T16:00:00.000Z",
+        state: "assigned",
+      },
+      {
+        startTime: "2026-04-04T16:00:00.000Z",
+        endTime: "2026-04-04T20:00:00.000Z",
+        state: "available",
+      },
+    ],
+  );
+});
+
+test("summarizes fully and partially covered 12h shifts per lane", () => {
+  const summaries = summarizePlanningLaneCoverage({
+    laneBlocks: {
+      A1: [
+        {
+          id: "a1-full",
+          key: "a1-full",
+          volunteerId: "vol-1",
+          volunteerName: "Alice",
+          volunteerColor: "#10b981",
+          startTime: "2026-04-01T04:00:00.000Z",
+          endTime: "2026-04-01T16:00:00.000Z",
+          lane: "A1",
+          projectedLane: "A1",
+          explicitLane: true,
+          status: "CONFIRMED",
+          source: "MANUAL",
+        },
+        {
+          id: "a1-partial",
+          key: "a1-partial",
+          volunteerId: "vol-2",
+          volunteerName: "Bob",
+          volunteerColor: "#ef4444",
+          startTime: "2026-04-01T16:00:00.000Z",
+          endTime: "2026-04-01T20:00:00.000Z",
+          lane: "A1",
+          projectedLane: "A1",
+          explicitLane: true,
+          status: "CONFIRMED",
+          source: "MANUAL",
+        },
+      ],
+      A2: [
+        {
+          id: "a2-partial",
+          key: "a2-partial",
+          volunteerId: "vol-3",
+          volunteerName: "Charlie",
+          volunteerColor: "#3b82f6",
+          startTime: "2026-04-01T08:00:00.000Z",
+          endTime: "2026-04-01T16:00:00.000Z",
+          lane: "A2",
+          projectedLane: "A2",
+          explicitLane: true,
+          status: "CONFIRMED",
+          source: "MANUAL",
+        },
+      ],
+      A3: [],
+    },
+    coverageStart: "2026-04-01T04:00:00.000Z",
+    coverageEnd: "2026-04-02T04:00:00.000Z",
+  });
+
+  assert.deepEqual(summaries.A1, {
+    fullyCovered: 1,
+    partiallyCovered: 1,
+    total: 2,
+  });
+  assert.deepEqual(summaries.A2, {
+    fullyCovered: 0,
+    partiallyCovered: 1,
+    total: 2,
+  });
 });
